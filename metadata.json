@@ -1,0 +1,9 @@
+
+{
+  "name": "Tabi-Kuma: 夢幻旅人",
+  "description": "少女系夢幻馬卡龍風格的團體旅遊規劃工具。",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
