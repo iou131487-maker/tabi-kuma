@@ -21,14 +21,15 @@ type FirebaseStorage = any;
  * 1. 到 Firebase Console -> 專案設定 -> 一般 -> 你的應用程式
  * 2. 複製 firebaseConfig 物件並貼上到這裡
  */
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY", 
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_ID",
-  appId: "YOUR_APP_ID"
-};
+ const firebaseConfig = {
+    apiKey: "AIzaSyDzN_IssG5rmwMqbIx80VJJ917lEniYgDA",
+    authDomain: "travel-11318.firebaseapp.com",
+    projectId: "travel-11318",
+    storageBucket: "travel-11318.firebasestorage.app",
+    messagingSenderId: "184290725381",
+    appId: "1:184290725381:web:1b97eece3666a0ea93d66c"
+  };
+
 
 let auth: Auth | null = null;
 let db: Firestore | null = null;
