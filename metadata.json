@@ -1,9 +1,15 @@
 
 {
   "name": "Tabi-Kuma: 夢幻旅人",
+  "short_name": "Tabi-Kuma",
   "description": "少女系夢幻馬卡龍風格的團體旅遊規劃工具。",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#FFF0F5",
+  "theme_color": "#B1E5D9",
   "requestFramePermissions": [
     "camera",
+    "microphone",
     "geolocation"
   ]
 }
