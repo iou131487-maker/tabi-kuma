@@ -6,14 +6,14 @@ import { getStorage } from "firebase/storage";
 
 // 注意：這裡的配置應從 Firebase 控制台取得
 // 為了演示，我們使用佔位符。請更換為你自己的專案設定。
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "tabi-kuma.firebaseapp.com",
-  projectId: "tabi-kuma",
-  storageBucket: "tabi-kuma.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
-};
+  const firebaseConfig = {
+    apiKey: "AIzaSyDzN_IssG5rmwMqbIx80VJJ917lEniYgDA",
+    authDomain: "travel-11318.firebaseapp.com",
+    projectId: "travel-11318",
+    storageBucket: "travel-11318.firebasestorage.app",
+    messagingSenderId: "184290725381",
+    appId: "1:184290725381:web:1b97eece3666a0ea93d66c"
+  };
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
