@@ -2,7 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
-import { initAuth } from './firebase'; // 引入 Firebase 初始化
+import { initAuth, isConfigured } from './firebase'; 
+import { Wifi, WifiOff, AlertCircle } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -10,20 +11,31 @@ import JournalView from './features/JournalView';
 import PlanningView from './features/PlanningView';
 import MembersView from './features/MembersView';
 
-const TAB_COLORS: Record<string, string> = {
-  schedule: '#E0F2F1',
-  bookings: '#E1F5FE',
-  expense: '#FCE4EC',
-  journal: '#F3E5F5',
-  planning: '#FFF9C4',
-  members: '#FFF3E0'
+// --- 在這裡修改開屏畫面設定 ---
+const SPLASH_CONFIG = {
+  icon: '🌸', // 可以換成 ✈️, 🏕️, 🐰 等任何 Emoji 或 <img> 標籤
+  title: 'Tabi-Kuma', // 你的 App 名字
+  subTitle: '夢幻旅人．冒險開始'
 };
 
 const Header = () => (
   <header className="px-6 pt-8 pb-4 flex items-center justify-between">
-    <div>
-      <h1 className="text-2xl font-black text-journey-brown tracking-tight">北海道．春櫻之旅</h1>
-      <p className="text-journey-brown/40 text-[10px] font-bold uppercase tracking-[0.2em] mt-1">2024 MAY 12 - MAY 18</p>
+    <div className="relative">
+      <div className="flex items-center gap-2 mb-1">
+        <h1 className="text-2xl font-black text-journey-brown tracking-tight">北海道．春櫻之旅</h1>
+        {!isConfigured ? (
+          <div className="flex items-center gap-1 bg-journey-red/10 text-journey-red px-2 py-0.5 rounded-full border border-journey-red/20 shadow-soft-sm">
+            <WifiOff size={10} />
+            <span className="text-[8px] font-black uppercase">Demo Mode</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 bg-journey-green/20 text-journey-darkGreen px-2 py-0.5 rounded-full border border-journey-green/20">
+            <Wifi size={10} className="animate-pulse" />
+            <span className="text-[8px] font-black uppercase">Live Sync</span>
+          </div>
+        )}
+      </div>
+      <p className="text-journey-brown/40 text-[10px] font-bold uppercase tracking-[0.2em]">2024 MAY 12 - MAY 18</p>
     </div>
     <div className="w-12 h-12 rounded-3xl bg-white shadow-soft flex items-center justify-center overflow-hidden border-4 border-white transition-transform active:scale-90">
        <img src="https://picsum.photos/seed/traveler/100/100" className="w-full h-full object-cover" alt="user" />
@@ -64,42 +76,29 @@ const BottomNav = () => {
   );
 };
 
-const BackgroundManager = () => {
-  const location = useLocation();
-  const currentPath = location.pathname.substring(1) || 'schedule';
-
-  useEffect(() => {
-    document.body.style.backgroundColor = TAB_COLORS[currentPath] || '#FFF0F5';
-  }, [currentPath]);
-
-  return null;
-};
-
 const App: React.FC = () => {
   const [showWelcome, setShowWelcome] = useState(true);
-  const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
-    // 執行 Firebase 匿名登入
-    initAuth().then(() => {
-      setIsAuthReady(true);
-      // 延遲關閉歡迎畫面
-      setTimeout(() => setShowWelcome(false), 2000);
+    initAuth().finally(() => {
+      const timer = setTimeout(() => setShowWelcome(false), 2000);
+      return () => clearTimeout(timer);
     });
   }, []);
 
   return (
     <Router>
-      <BackgroundManager />
-      
       {showWelcome && (
         <div className="fixed inset-0 z-[100] bg-journey-cream flex flex-col items-center justify-center transition-opacity duration-1000">
            <div className="w-24 h-24 bg-white rounded-[2.5rem] shadow-soft flex items-center justify-center mb-4 animate-bounce">
-              <span className="text-4xl">🐻</span>
+              <span className="text-4xl">{SPLASH_CONFIG.icon}</span>
            </div>
-           <h2 className="text-journey-brown font-black text-xl tracking-widest animate-pulse">Tabi-Kuma</h2>
-           <p className="text-journey-brown/40 text-[10px] mt-2 font-bold uppercase tracking-widest">
-             {isAuthReady ? "連線成功！歡迎回來" : "正在建立您的冒險身份..."}
+           <h2 className="text-journey-brown font-black text-xl tracking-widest animate-pulse">{SPLASH_CONFIG.title}</h2>
+           <p className="text-journey-brown/40 text-[10px] mt-2 font-bold uppercase tracking-widest text-center">
+             {SPLASH_CONFIG.subTitle}<br/>
+             <span className="opacity-50 mt-1 block">
+               {isConfigured ? '正在同步雲端冒險...' : '啟動預覽模式...'}
+             </span>
            </p>
         </div>
       )}
@@ -107,6 +106,15 @@ const App: React.FC = () => {
       <div className="min-h-screen pb-28 max-w-md mx-auto relative overflow-x-hidden">
         <Header />
         
+        {!isConfigured && (
+          <div className="mx-6 mb-4 bg-journey-red/10 border-2 border-dashed border-journey-red/30 rounded-3xl p-3 flex items-center gap-3">
+            <AlertCircle className="text-journey-red shrink-0" size={16} />
+            <p className="text-[10px] font-bold text-journey-brown/60 leading-tight">
+              目前為預覽模式。請在 <code className="bg-white px-1">firebase.ts</code> 配置您的 API Key 以啟用雲端同步。
+            </p>
+          </div>
+        )}
+
         <main className="px-5 transition-all duration-500 min-h-[60vh]">
           <Routes>
             <Route path="/" element={<Navigate to="/schedule" replace />} />
