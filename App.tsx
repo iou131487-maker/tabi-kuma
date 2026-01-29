@@ -307,7 +307,7 @@ const AppContent = () => {
       
       <main className="px-6 animate-in fade-in slide-in-from-bottom-4 duration-700 relative z-10">
         <Routes>
-          <Route path="/schedule" element={<ScheduleView />} />
+          <Route path="/schedule" element={<ScheduleView tripConfig={tripConfig} />} />
           <Route path="/bookings" element={<BookingsView />} />
           <Route path="/expense" element={<ExpenseView />} />
           <Route path="/journal" element={<JournalView />} />
