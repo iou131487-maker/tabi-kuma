@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Plane, Hotel, Ticket, Lock, Unlock, Plus, X, Send, Trash2, MapPin, Loader2, Calendar } from 'lucide-react';
+
+import React, { useState, useEffect, useRef } from 'react';
+import { Plane, Hotel, Ticket, Lock, Unlock, Plus, X, Send, Trash2, MapPin, Loader2, Calendar, Car, Camera, Info, DollarSign, Clock } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
 const BookingsView: React.FC = () => {
@@ -7,119 +8,111 @@ const BookingsView: React.FC = () => {
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const [type, setType] = useState<'flight' | 'hotel' | 'ticket'>('flight');
+  // Form states
+  const [type, setType] = useState<'flight' | 'hotel' | 'car' | 'ticket'>('flight');
   const [title, setTitle] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [flightNo, setFlightNo] = useState('');
-  const [time, setTime] = useState('');
-  const [address, setAddress] = useState('');
-  const [checkIn, setCheckIn] = useState('');
-  const [cost, setCost] = useState('');
+  const [details, setDetails] = useState<any>({
+    from: '', to: '', flightNo: '', time: '',
+    address: '', checkIn: '', checkOut: '', cost: '',
+    pickup: '', return: '',
+    note: ''
+  });
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
 
   const tripId = 'hokkaido-2024';
 
   const fetchBookings = async () => {
     if (!supabase || !isSupabaseConfigured) {
       setBookings([
-        { id: 'demo-1', type: 'flight', details: { from: 'TPE', to: 'CTS', flightNo: 'JL812', time: '5/12 08:30' } }
+        { id: 'demo-1', type: 'flight', details: { from: 'TPE', to: 'CTS', flightNo: 'JL812', time: '5/12 08:30' } },
+        { id: 'demo-2', type: 'hotel', title: '札幌格拉斯麗飯店', details: { address: '札幌市中央區', checkIn: '5/12', checkOut: '5/15', cost: '12000' } },
+        { id: 'demo-3', type: 'car', title: 'Toyota Rent-a-car', details: { pickup: '千歲機場', return: '札幌站前', time: '5/15 10:00' } }
       ]);
       setLoading(false);
       return;
     }
-
-    const { data, error } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('trip_id', tripId)
-      .order('created_at', { ascending: false });
-
+    const { data, error } = await supabase.from('bookings').select('*').eq('trip_id', tripId).order('created_at', { ascending: false });
     if (!error) setBookings(data || []);
     setLoading(false);
   };
 
   useEffect(() => {
     fetchBookings();
-    if (supabase) {
-      const channel = supabase.channel('bookings-changes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => fetchBookings())
-        .subscribe();
-      return () => { supabase.removeChannel(channel); };
-    }
   }, []);
 
-  const toggleLock = () => {
-    if (isUnlocked) {
-      setIsUnlocked(false);
-    } else {
-      const pin = prompt('請輸入 PIN 碼 (預設 007)');
-      if (pin === '007') setIsUnlocked(true);
-      else alert('PIN 碼錯誤！');
-    }
-  };
-
-  const handleAdd = async () => {
-    if (!supabase) {
-      alert("Demo 模式不支援儲存");
-      return;
-    }
-
-    const payload: any = {
-      type,
-      title: type === 'flight' ? `${from} → ${to}` : title,
-      trip_id: tripId,
-      details: type === 'flight' ? { from, to, flightNo, time } : type === 'hotel' ? { address, checkIn, cost } : { note: '一般票券' }
-    };
-
+  const handleSave = async () => {
+    if (!supabase) return;
+    const payload = { type, title: type === 'flight' ? `${details.from} → ${details.to}` : title, details, trip_id: tripId, image_url: previewImg };
     const { error } = await supabase.from('bookings').insert([payload]);
-    if (!error) {
-      setShowAddModal(false);
-      fetchBookings();
-    }
+    if (!error) { setShowAddModal(false); fetchBookings(); resetForm(); }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!supabase || !confirm('確定要刪除嗎？')) return;
-    await supabase.from('bookings').delete().eq('id', id);
-    fetchBookings();
+  const resetForm = () => {
+    setTitle(''); setDetails({}); setPreviewImg(null);
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center mb-2">
-        <h2 className="text-xl font-black text-journey-brown tracking-tight">預訂與憑證</h2>
-        <div className="flex gap-2">
-          <button onClick={() => setShowAddModal(true)} className="p-2.5 bg-journey-green text-white rounded-2xl shadow-soft active:scale-90 transition-transform"><Plus size={20} /></button>
-          <button onClick={toggleLock} className={`p-2.5 rounded-2xl flex items-center gap-2 transition-all ${isUnlocked ? 'bg-journey-accent text-journey-brown shadow-soft' : 'bg-white shadow-soft text-journey-brown/20'}`}>{isUnlocked ? <Unlock size={20} /> : <Lock size={20} />}</button>
+    <div className="space-y-6 pb-20">
+      <div className="flex justify-between items-center px-2">
+        <div>
+          <h2 className="text-2xl font-black text-journey-brown tracking-tight">預訂憑證</h2>
+          <p className="text-[10px] font-bold text-journey-brown/30 uppercase tracking-[0.2em] mt-1">Bookings & Vouchers</p>
         </div>
+        <button onClick={() => setShowAddModal(true)} className="w-14 h-14 bg-journey-green text-white rounded-3xl shadow-soft flex items-center justify-center active:scale-90 transition-transform border-b-4 border-journey-darkGreen">
+          <Plus size={24} strokeWidth={3} />
+        </button>
       </div>
 
       {loading ? (
-        <div className="flex flex-col items-center py-20 opacity-30"><Loader2 className="animate-spin mb-2" /><p className="text-[10px] font-black uppercase tracking-widest">同步中...</p></div>
-      ) : bookings.length === 0 ? (
-        <div className="bg-white/40 rounded-4xl p-12 text-center border-2 border-dashed border-journey-sand"><p className="text-journey-brown/40 text-sm font-bold">還沒有任何預訂...✨</p></div>
+        <div className="flex flex-col items-center py-20 opacity-30"><Loader2 className="animate-spin mb-2" /><p className="text-[10px] font-black uppercase tracking-widest">同步手記中...</p></div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-8">
           {bookings.map((item) => (
             <div key={item.id} className="relative animate-in fade-in slide-in-from-bottom-4">
-              {isUnlocked && <button onClick={() => handleDelete(item.id)} className="absolute -top-2 -right-2 z-20 bg-white shadow-soft text-journey-red p-2 rounded-full"><Trash2 size={14} /></button>}
-              {item.type === 'flight' ? (
-                <div className="relative overflow-visible">
-                  <div className="bg-white rounded-t-3xl p-6 border-b-2 border-dashed border-journey-sand shadow-soft">
+              {item.type === 'flight' && (
+                <div className="bg-white rounded-[2.5rem] overflow-hidden shadow-soft border-4 border-white">
+                  <div className="bg-journey-blue/20 p-6 border-b-4 border-dashed border-white relative">
+                    <div className="absolute -left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-journey-cream rounded-full"></div>
+                    <div className="absolute -right-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-journey-cream rounded-full"></div>
                     <div className="flex justify-between items-center mb-6">
-                      <div className="text-journey-brown"><h3 className="text-2xl font-black">{item.details?.from || '---'}</h3><p className="text-[10px] font-bold opacity-30 uppercase">Origin</p></div>
-                      <div className="flex flex-col items-center"><Plane size={24} className="text-journey-blue transform rotate-45 mb-1" /><div className="w-16 h-[1.5px] bg-journey-sand"></div><p className="text-[9px] mt-1 font-black text-journey-brown/40">{item.details?.flightNo || 'FLIGHT'}</p></div>
-                      <div className="text-right text-journey-brown"><h3 className="text-2xl font-black">{item.details?.to || '---'}</h3><p className="text-[10px] font-bold opacity-30 uppercase">Dest</p></div>
+                      <div className="text-journey-brown"><h3 className="text-3xl font-black">{item.details?.from || 'TPE'}</h3><p className="text-[9px] font-black opacity-30 uppercase tracking-widest">Departure</p></div>
+                      <div className="flex flex-col items-center flex-grow px-4"><Plane size={24} className="text-journey-blue transform rotate-45 mb-2" /><div className="w-full h-[2px] bg-journey-blue/30 rounded-full"></div><p className="text-[10px] mt-2 font-black text-journey-blue">{item.details?.flightNo || 'JL 812'}</p></div>
+                      <div className="text-right text-journey-brown"><h3 className="text-3xl font-black">{item.details?.to || 'CTS'}</h3><p className="text-[9px] font-black opacity-30 uppercase tracking-widest">Arrival</p></div>
                     </div>
-                    <div className="flex items-center gap-2 text-journey-brown"><Calendar size={14} className="text-journey-blue" /><span className="text-xs font-black">{item.details?.time || '時間未定'}</span></div>
                   </div>
-                  <div className="bg-white rounded-b-3xl p-5 shadow-soft flex items-center justify-between border-t border-journey-sand/10"><p className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest">Boarding Pass Verified</p><div className="w-8 h-8 bg-journey-sand/30 rounded-lg flex items-center justify-center opacity-40"><Ticket size={16} /></div></div>
+                  <div className="p-6 bg-white flex justify-between items-center">
+                    <div className="flex items-center gap-3"><Calendar size={18} className="text-journey-blue" /><span className="text-sm font-black text-journey-brown">{item.details?.time || '5/12 08:30'}</span></div>
+                    <div className="w-12 h-12 bg-journey-cream rounded-2xl flex items-center justify-center opacity-40"><Ticket size={24} /></div>
+                  </div>
                 </div>
-              ) : (
-                <div className="bg-white rounded-3xl p-5 flex items-center gap-4 shadow-soft">
-                  <div className="w-12 h-12 bg-journey-blue/10 rounded-2xl flex items-center justify-center text-journey-blue"><Ticket size={24} /></div>
-                  <div className="flex-grow"><h5 className="font-black text-journey-brown text-sm">{item.title}</h5><p className="text-[10px] text-journey-brown/40 font-bold uppercase tracking-widest">電子憑證</p></div>
+              )}
+
+              {item.type === 'hotel' && (
+                <div className="bg-white rounded-[2.5rem] p-6 shadow-soft border-l-[12px] border-journey-red">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h4 className="text-lg font-black text-journey-brown mb-1">{item.title}</h4>
+                      <div className="flex items-center gap-1 text-journey-brown/40 text-[10px] font-bold"><MapPin size={10} /><span>{item.details?.address}</span></div>
+                    </div>
+                    <div className="bg-journey-red/10 p-3 rounded-2xl text-journey-red"><Hotel size={24} /></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 bg-journey-cream/50 p-4 rounded-3xl">
+                     <div className="space-y-1"><p className="text-[8px] font-black text-journey-brown/30 uppercase tracking-widest">Check-In</p><p className="text-xs font-black text-journey-brown">{item.details?.checkIn}</p></div>
+                     <div className="space-y-1 text-right"><p className="text-[8px] font-black text-journey-brown/30 uppercase tracking-widest">Check-Out</p><p className="text-xs font-black text-journey-brown">{item.details?.checkOut}</p></div>
+                  </div>
+                </div>
+              )}
+
+              {item.type === 'car' && (
+                <div className="bg-white rounded-[2.5rem] p-6 shadow-soft border-l-[12px] border-journey-accent">
+                  <div className="flex justify-between items-center mb-4">
+                    <div><h4 className="text-lg font-black text-journey-brown">{item.title}</h4><p className="text-[10px] font-bold text-journey-accent uppercase tracking-widest">Rental Car</p></div>
+                    <div className="bg-journey-accent/20 p-3 rounded-2xl text-journey-brown"><Car size={24} /></div>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-bold text-journey-brown/60 mb-2"><MapPin size={14} className="text-journey-accent" /><span>{item.details?.pickup} → {item.details?.return}</span></div>
+                  <div className="flex items-center gap-3 text-xs font-bold text-journey-brown/60"><Clock size={14} className="text-journey-accent" /><span>{item.details?.time}</span></div>
                 </div>
               )}
             </div>
@@ -128,23 +121,35 @@ const BookingsView: React.FC = () => {
       )}
 
       {showAddModal && (
-        <div className="fixed inset-0 z-[100] bg-journey-brown/40 backdrop-blur-md flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-6">
-            <div className="flex justify-between items-center"><h3 className="text-lg font-black text-journey-brown">新增預訂</h3><button onClick={() => setShowAddModal(false)} className="p-2 bg-journey-cream rounded-full"><X size={20} /></button></div>
-            <div className="flex bg-journey-cream p-1 rounded-2xl">{(['flight', 'hotel', 'ticket'] as const).map(t => (
-              <button key={t} onClick={() => setType(t)} className={`flex-1 py-2.5 rounded-xl text-[10px] font-black transition-all ${type === t ? 'bg-white text-journey-brown shadow-sm' : 'text-journey-brown/30'}`}>{t === 'flight' ? '機票' : t === 'hotel' ? '住宿' : '票券'}</button>
-            ))}</div>
+        <div className="fixed inset-0 z-[100] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-sm rounded-t-[3.5rem] sm:rounded-[3rem] p-8 shadow-2xl space-y-6 animate-in slide-in-from-bottom-10 duration-500 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-black text-journey-brown">新增預訂</h3>
+              <button onClick={() => setShowAddModal(false)} className="p-3 bg-journey-cream rounded-full text-journey-brown/30"><X size={20} /></button>
+            </div>
+            
+            <div className="flex bg-journey-cream p-1.5 rounded-3xl gap-1 overflow-x-auto">
+              {(['flight', 'hotel', 'car', 'ticket'] as const).map(t => (
+                <button key={t} onClick={() => setType(t)} className={`shrink-0 px-4 py-2 rounded-2xl text-[10px] font-black transition-all ${type === t ? 'bg-white text-journey-brown shadow-sm' : 'text-journey-brown/40'}`}>
+                  {t === 'flight' ? '機票' : t === 'hotel' ? '住宿' : t === 'car' ? '租車' : '票券'}
+                </button>
+              ))}
+            </div>
+
             <div className="space-y-4">
               {type === 'flight' ? (
-                <><div className="grid grid-cols-2 gap-3">
-                  <input type="text" value={from} onChange={e => setFrom(e.target.value.toUpperCase())} placeholder="TPE" className="w-full bg-journey-cream rounded-2xl p-4 text-journey-brown font-black focus:outline-none" maxLength={3} />
-                  <input type="text" value={to} onChange={e => setTo(e.target.value.toUpperCase())} placeholder="CTS" className="w-full bg-journey-cream rounded-2xl p-4 text-journey-brown font-black focus:outline-none" maxLength={3} />
+                <div className="grid grid-cols-2 gap-4">
+                  <input placeholder="From (TPE)" value={details.from} onChange={e => setDetails({...details, from: e.target.value.toUpperCase()})} className="bg-journey-cream p-4 rounded-2xl text-sm font-black focus:outline-none" />
+                  <input placeholder="To (CTS)" value={details.to} onChange={e => setDetails({...details, to: e.target.value.toUpperCase()})} className="bg-journey-cream p-4 rounded-2xl text-sm font-black focus:outline-none" />
                 </div>
-                <input type="text" value={flightNo} onChange={e => setFlightNo(e.target.value.toUpperCase())} placeholder="JL 096" className="w-full bg-journey-cream rounded-2xl p-4 text-journey-brown font-black focus:outline-none" />
-                <input type="text" value={time} onChange={e => setTime(e.target.value)} placeholder="5/12 08:30" className="w-full bg-journey-cream rounded-2xl p-4 text-journey-brown font-black focus:outline-none" /></>
-              ) : <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="名稱" className="w-full bg-journey-cream rounded-2xl p-4 text-journey-brown font-black focus:outline-none" />}
+              ) : (
+                <input placeholder="名稱 (例如: 札幌大飯店)" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-journey-cream p-4 rounded-2xl text-sm font-black focus:outline-none" />
+              )}
+              <input placeholder="日期與時間" value={details.time} onChange={e => setDetails({...details, time: e.target.value})} className="w-full bg-journey-cream p-4 rounded-2xl text-sm font-black focus:outline-none" />
+              {type === 'hotel' && <input placeholder="詳細地址" value={details.address} onChange={e => setDetails({...details, address: e.target.value})} className="w-full bg-journey-cream p-4 rounded-2xl text-sm font-black focus:outline-none" />}
             </div>
-            <button onClick={handleAdd} className="w-full bg-journey-darkGreen text-white font-black py-4 rounded-2xl shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all"><Send size={18} /> 儲存</button>
+
+            <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-5 rounded-[2rem] shadow-lg flex items-center justify-center gap-2 active:scale-95 border-b-4 border-black/10"><Send size={18} /> 儲存至憑證中心</button>
           </div>
         </div>
       )}
