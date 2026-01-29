@@ -1,68 +1,55 @@
+// @ts-ignore
+import { initializeApp, getApp, getApps } from "firebase/app";
+// @ts-ignore
+import { getAuth, signInAnonymously } from "firebase/auth";
+// @ts-ignore
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
+// @ts-ignore
+import { getStorage } from "firebase/storage";
 
-// Fix: Use namespaced imports to bypass "no exported member" errors in environments with conflicting Firebase type definitions
-import * as FirebaseApp from 'firebase/app';
-import * as FirebaseAuth from 'firebase/auth';
-import * as FirebaseFirestore from 'firebase/firestore';
-import * as FirebaseStorage from 'firebase/storage';
+const API_KEY = process.env.API_KEY;
 
-// Destructure and cast to any to resolve missing named exports at compile time while maintaining modular logic
-const { initializeApp, getApps, getApp } = FirebaseApp as any;
-const { getAuth, signInAnonymously } = FirebaseAuth as any;
-const { getFirestore, enableIndexedDbPersistence } = FirebaseFirestore as any;
-const { getStorage } = FirebaseStorage as any;
+const firebaseConfig = {
+  apiKey: API_KEY, 
+  authDomain: "travel-11318.firebaseapp.com",
+  projectId: "travel-11318",
+  storageBucket: "travel-11318.firebasestorage.app",
+  messagingSenderId: "184290725381",
+  appId: "1:184290725381:web:1b97eece3666a0ea93d66c"
+};
 
-// Define types as any to avoid direct type import errors from problematic modules
-type Auth = any;
-type Firestore = any;
-type FirebaseStorage = any;
-
-/**
- * 重要：請將下方的 config 內容替換為你在 Firebase Console 取得的實際內容
- * 1. 到 Firebase Console -> 專案設定 -> 一般 -> 你的應用程式
- * 2. 複製 firebaseConfig 物件並貼上到這裡
- */
- const firebaseConfig = {
-    apiKey: "AIzaSyDzN_IssG5rmwMqbIx80VJJ917lEniYgDA",
-    authDomain: "travel-11318.firebaseapp.com",
-    projectId: "travel-11318",
-    storageBucket: "travel-11318.firebasestorage.app",
-    messagingSenderId: "184290725381",
-    appId: "1:184290725381:web:1b97eece3666a0ea93d66c"
-  };
-
-
-let auth: Auth | null = null;
-let db: Firestore | null = null;
-let storage: FirebaseStorage | null = null;
+let auth: any = null;
+let db: any = null;
+let storage: any = null;
 let isConfigured = false;
 
-// 精確檢查配置是否已正確填寫 (排除掉預設字串與範例字串)
-const hasValidConfig = 
-  firebaseConfig.apiKey && 
-  firebaseConfig.apiKey !== "YOUR_API_KEY" && 
-  firebaseConfig.apiKey !== "AIzaSy..." &&
-  !firebaseConfig.projectId.includes("YOUR_PROJECT_ID");
+// 檢查 API Key 是否有效
+const hasValidConfig = typeof API_KEY === 'string' && API_KEY.trim().length > 20;
 
 if (hasValidConfig) {
   try {
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-    auth = getAuth(app);
-    db = getFirestore(app);
-    storage = getStorage(app);
     isConfigured = true;
 
-    // 啟動離線持久化儲存
-    if (typeof window !== "undefined" && db) {
-      enableIndexedDbPersistence(db).catch((err: any) => {
-        if (err.code === 'failed-precondition') {
-          console.warn("Firestore Persistence: 多個分頁開啟中，僅一個分頁能啟用持久化。");
-        } else if (err.code === 'unimplemented') {
-          console.warn("Firestore Persistence: 當前瀏覽器不支援離線儲存。");
-        }
-      });
-    }
+    // 獨立初始化各個服務，避免單一服務(如Storage)未開啟導致全部失敗
+    try {
+      auth = getAuth(app);
+    } catch (e) { console.warn("Auth 未就緒: 請確認後台已啟用 Authentication"); }
+
+    try {
+      db = getFirestore(app);
+      if (typeof window !== "undefined") {
+        enableIndexedDbPersistence(db).catch(() => {});
+      }
+    } catch (e) { console.warn("Firestore 未就緒: 請確認後台已建立 Database"); }
+
+    try {
+      storage = getStorage(app);
+    } catch (e) { console.warn("Storage 未就緒: 這是 403 錯誤的主因，請在後台啟動 Storage 並點擊 Get Started"); }
+
+    console.log("Firebase 核心已載入 ✨ (請確保 Console 後台已開啟 Auth/Firestore/Storage)");
   } catch (error) {
-    console.error("Firebase 初始化失敗，請檢查 Config 格式:", error);
+    console.error("Firebase 初始化失敗:", error);
     isConfigured = false;
   }
 }
@@ -75,7 +62,7 @@ export const initAuth = async () => {
     const userCredential = await signInAnonymously(auth);
     return userCredential.user;
   } catch (error) {
-    console.error("Firebase 匿名登入失敗 (可能是 Auth 未在後台啟用):", error);
+    console.error("Firebase 匿名登入失敗: 請檢查 Console -> Authentication 是否開啟了 Anonymous 供應商");
     return null;
   }
 };
