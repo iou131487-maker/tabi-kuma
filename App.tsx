@@ -1,8 +1,9 @@
+
 import React, { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
 import { initSupabaseAuth, isSupabaseConfigured } from './supabase'; 
-import { WifiOff, AlertCircle, Sparkles, Cloud, Info, CheckCircle2, XCircle, Compass, Luggage, Settings2, Save, X, Plane, Heart, Palmtree, MapPin, Stars } from 'lucide-react';
+import { WifiOff, AlertCircle, Sparkles, Cloud, Info, CheckCircle2, XCircle, Compass, Luggage, Settings2, Save, X, Plane, Heart, Palmtree, MapPin, Stars, Edit3, Calendar } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -99,6 +100,64 @@ const Header = ({ isLive, isError, tripConfig, onOpenSettings }: { isLive: boole
   );
 };
 
+const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolean, onClose: () => void, config: any, onSave: (newConfig: any) => void }) => {
+  const [title, setTitle] = useState(config.title);
+  const [dateRange, setDateRange] = useState(config.dateRange);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[120] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in duration-300">
+      <div className="bg-white w-full max-w-sm rounded-t-[3.5rem] sm:rounded-[3.5rem] p-8 shadow-2xl space-y-8 animate-in slide-in-from-bottom-10 duration-500">
+        <div className="flex justify-between items-center">
+          <div>
+            <h3 className="text-2xl font-black text-journey-brown tracking-tight">冒險設定</h3>
+            <p className="text-[10px] font-bold text-journey-brown/30 uppercase tracking-[0.2em] mt-1">Trip Settings</p>
+          </div>
+          <button onClick={onClose} className="p-3 bg-journey-cream rounded-full text-journey-brown/30 hover:text-journey-brown transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-3">
+              <Edit3 size={10} /> 旅程標題
+            </label>
+            <input 
+              type="text" 
+              value={title} 
+              onChange={(e) => setTitle(e.target.value)} 
+              placeholder="要去哪裡冒險呢？" 
+              className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none ring-journey-green focus:ring-4 transition-all border-b-4 border-transparent focus:border-journey-darkGreen/10"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-3">
+              <Calendar size={10} /> 日期範圍
+            </label>
+            <input 
+              type="text" 
+              value={dateRange} 
+              onChange={(e) => setDateRange(e.target.value)} 
+              placeholder="例如: 2024 MAY 12 - 18" 
+              className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none ring-journey-green focus:ring-4 transition-all border-b-4 border-transparent focus:border-journey-darkGreen/10"
+            />
+          </div>
+        </div>
+
+        <button 
+          onClick={() => onSave({ ...config, title, dateRange })}
+          className="w-full bg-journey-darkGreen text-white font-black py-5 rounded-[2.5rem] shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all transform border-b-4 border-black/10 hover:brightness-105"
+        >
+          <Save size={20} /> 更新冒險計畫
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const Navigation = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -137,8 +196,9 @@ const AppContent = () => {
   const [isError, setIsError] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [quote, setQuote] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
   
-  const [tripConfig] = useState(() => {
+  const [tripConfig, setTripConfig] = useState(() => {
     const saved = localStorage.getItem('trip_config');
     return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
   });
@@ -177,6 +237,12 @@ const AppContent = () => {
     };
     startup();
   }, [tripConfig.loadingQuotes]);
+
+  const handleSaveConfig = (newConfig: any) => {
+    setTripConfig(newConfig);
+    localStorage.setItem('trip_config', JSON.stringify(newConfig));
+    setShowSettings(false);
+  };
 
   if (initializing) {
     return (
@@ -236,7 +302,7 @@ const AppContent = () => {
         isLive={isLive} 
         isError={isError} 
         tripConfig={tripConfig} 
-        onOpenSettings={() => {}}
+        onOpenSettings={() => setShowSettings(true)}
       />
       
       <main className="px-6 animate-in fade-in slide-in-from-bottom-4 duration-700 relative z-10">
@@ -250,6 +316,13 @@ const AppContent = () => {
           <Route path="*" element={<Navigate to="/schedule" replace />} />
         </Routes>
       </main>
+
+      <TripSettingsModal 
+        isOpen={showSettings} 
+        onClose={() => setShowSettings(false)} 
+        config={tripConfig} 
+        onSave={handleSaveConfig} 
+      />
 
       <Navigation />
     </div>
