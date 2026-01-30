@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
 import { initSupabaseAuth, isSupabaseConfigured } from './supabase'; 
-import { WifiOff, AlertCircle, Cloud, CheckCircle2, XCircle, Settings2, Save, X, Plane, Camera } from 'lucide-react';
+import { WifiOff, AlertCircle, Cloud, CheckCircle2, XCircle, Settings2, Save, X, Plane, Camera, Copy, Link, RefreshCcw } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -54,8 +54,11 @@ const Header = ({ isLive, isError, tripConfig, onOpenSettings }: { isLive: boole
         <div className="absolute top-20 left-6 right-6 bg-white rounded-3xl shadow-2xl z-[60] border-4 border-journey-sand p-6 animate-in zoom-in-95 duration-200">
            <div className="flex justify-between items-center mb-4"><h4 className="text-sm font-black text-journey-brown">連線狀態</h4><button onClick={() => setShowConfigHelper(false)} className="text-journey-brown/20"><X size={16}/></button></div>
            <div className="space-y-3">
+             <div className="flex items-center justify-between p-3 bg-journey-cream rounded-2xl">
+               <span className="text-xs font-bold text-journey-brown/60">同步代碼: {tripConfig.id}</span>
+               <button onClick={() => { navigator.clipboard.writeText(tripConfig.id); alert('代碼已複製！'); }} className="text-journey-blue"><Copy size={14} /></button>
+             </div>
              <div className="flex items-center justify-between p-3 bg-journey-cream rounded-2xl"><span className="text-xs font-bold text-journey-brown/60">雲端同步</span>{isSupabaseConfigured ? <CheckCircle2 className="text-journey-green" size={18} /> : <XCircle className="text-journey-red" size={18} />}</div>
-             <div className="flex items-center justify-between p-3 bg-journey-cream rounded-2xl"><span className="text-xs font-bold text-journey-brown/60">AI 助理</span>{process.env.API_KEY ? <CheckCircle2 className="text-journey-green" size={18} /> : <XCircle className="text-journey-red" size={18} />}</div>
            </div>
         </div>
       )}
@@ -67,6 +70,8 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
   const [title, setTitle] = useState(config.title);
   const [dateRange, setDateRange] = useState(config.dateRange);
   const [userAvatar, setUserAvatar] = useState(config.userAvatar);
+  const [joinId, setJoinId] = useState('');
+  const [showJoinField, setShowJoinField] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -76,6 +81,15 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
     }
   }, [isOpen, config]);
 
+  const handleJoin = () => {
+    if (!joinId.startsWith('trip-')) return alert('無效的代碼喔！');
+    if (confirm('確定要切換到此行程嗎？目前的本地修改若未同步可能會遺失喔！')) {
+      const newConfig = { ...DEFAULT_CONFIG, id: joinId };
+      onSave(newConfig);
+      window.location.reload(); // 強制重新整理以載入新 ID 的資料
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -84,6 +98,24 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
         <div className="flex justify-between items-center"><div><h3 className="text-2xl font-black text-journey-brown tracking-tight">手帳設定</h3><p className="text-[10px] font-bold text-journey-brown/30 uppercase tracking-[0.2em] mt-1">Config</p></div><button onClick={onClose} className="p-3 bg-journey-cream rounded-full text-journey-brown/30"><X size={20} /></button></div>
         <div className="space-y-6">
           <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-3">行程名稱</label><input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none ring-journey-green focus:ring-4 transition-all" /></div>
+          
+          <div className="p-5 bg-journey-blue/5 rounded-[2rem] border-2 border-journey-blue/10 space-y-3">
+             <div className="flex justify-between items-center">
+               <span className="text-[10px] font-black text-journey-blue uppercase tracking-widest">行程邀請碼</span>
+               <button onClick={() => { navigator.clipboard.writeText(config.id); alert('代碼已複製！傳給隊友吧 ✨'); }} className="text-[10px] font-black text-journey-blue underline">點擊複製</button>
+             </div>
+             <p className="text-sm font-black text-journey-brown font-mono">{config.id}</p>
+             <button onClick={() => setShowJoinField(!showJoinField)} className="text-[9px] font-black text-journey-brown/40 uppercase tracking-tighter flex items-center gap-1 mt-2">
+               {showJoinField ? '取消輸入' : '我有邀請碼，想要加入夥伴的行程...'}
+             </button>
+             {showJoinField && (
+               <div className="flex gap-2 mt-2 animate-in slide-in-from-top-2">
+                 <input placeholder="trip-xxx..." value={joinId} onChange={e => setJoinId(e.target.value)} className="flex-grow bg-white p-3 rounded-xl text-xs font-black focus:outline-none" />
+                 <button onClick={handleJoin} className="bg-journey-blue text-white px-4 rounded-xl text-xs font-black shadow-sm"><RefreshCcw size={14} /></button>
+               </div>
+             )}
+          </div>
+
           <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-3">出發日期</label><input type="date" value={dateRange} onChange={(e) => setDateRange(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none" /></div>
           <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-3">個人頭像網址</label><input type="text" value={userAvatar} onChange={(e) => setUserAvatar(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none" /></div>
         </div>
