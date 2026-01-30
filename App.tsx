@@ -146,11 +146,11 @@ const AppContent = () => {
       <main className="px-6 animate-in fade-in slide-in-from-bottom-4 duration-700 relative z-10">
         <Routes>
           <Route path="/schedule" element={<ScheduleView tripConfig={tripConfig} />} />
-          <Route path="/bookings" element={<BookingsView />} />
-          <Route path="/expense" element={<ExpenseView />} />
-          <Route path="/journal" element={<JournalView />} />
-          <Route path="/planning" element={<PlanningView />} />
-          <Route path="/members" element={<MembersView />} />
+          <Route path="/bookings" element={<BookingsView tripConfig={tripConfig} />} />
+          <Route path="/expense" element={<ExpenseView tripConfig={tripConfig} />} />
+          <Route path="/journal" element={<JournalView tripConfig={tripConfig} />} />
+          <Route path="/planning" element={<PlanningView tripConfig={tripConfig} />} />
+          <Route path="/members" element={<MembersView tripConfig={tripConfig} />} />
           <Route path="*" element={<Navigate to="/schedule" replace />} />
         </Routes>
       </main>
