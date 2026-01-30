@@ -12,23 +12,25 @@ const MembersView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
 
-  // 永遠使用永久 ID，不隨標題改變
   const tripId = tripConfig.id || 'default-trip';
 
   const fetchMembers = async () => {
     setLoading(true);
+    // 1. 優先從本地讀取
     const saved = localStorage.getItem(`members_${tripId}`);
     let localData = saved ? JSON.parse(saved) : [{ id: '1', name: '我', avatar: tripConfig.userAvatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=traveler' }];
     setMembers(localData);
 
+    // 2. 異步同步雲端
     if (supabase && isSupabaseConfigured) {
       try {
         const { data } = await supabase.from('members').select('*').eq('trip_id', tripId);
+        // 重要：只有雲端有資料才覆蓋
         if (data && data.length > 0) {
           setMembers(data);
           localStorage.setItem(`members_${tripId}`, JSON.stringify(data));
         }
-      } catch { console.warn("Cloud Sync failed"); }
+      } catch { console.warn("Cloud Sync offline"); }
     }
     setLoading(false);
   };
@@ -47,15 +49,16 @@ const MembersView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       ? members.map(m => m.id === editingMember.id ? payload : m)
       : [...members, payload];
 
-    // 同步更新 UI 與 LocalStorage
+    // 即時寫入本地
     setMembers(updated);
     localStorage.setItem(`members_${tripId}`, JSON.stringify(updated));
 
-    // 如果修改的是本人，連帶更新 App 端的全域設定
+    // 如果修改的是本人，強制更新 App 端配置防止頭像在 Reload 時變回舊的
     if (name === '我') {
       const config = JSON.parse(localStorage.getItem('trip_config') || '{}');
       const newConfig = { ...config, userAvatar: payload.avatar };
       localStorage.setItem('trip_config', JSON.stringify(newConfig));
+      // 注意：這裏建議使用者重新整理或透過 Context 更新 App 狀態
     }
 
     if (supabase && isSupabaseConfigured) {
@@ -111,14 +114,8 @@ const MembersView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
           <div className="bg-white w-full max-w-sm rounded-t-[3.5rem] sm:rounded-[3rem] p-8 shadow-2xl space-y-6 animate-in slide-in-from-bottom-10">
             <div className="flex justify-between items-center"><h3 className="text-xl font-black text-journey-brown">{editingMember ? '編輯成員' : '新增成員'}</h3><button onClick={() => setShowForm(false)} className="p-3 bg-journey-cream rounded-full text-journey-brown/30"><X size={20} /></button></div>
             <div className="space-y-4">
-               <div className="space-y-2">
-                 <label className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-4">Name</label>
-                 <input placeholder="姓名 (例: 我)" value={name} onChange={e => setName(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none ring-journey-green/20 focus:ring-4 transition-all" />
-               </div>
-               <div className="space-y-2">
-                 <label className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-4">Avatar URL</label>
-                 <input placeholder="頭像圖片網址" value={avatar} onChange={e => setAvatar(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-xs text-journey-brown/40 font-bold focus:outline-none" />
-               </div>
+               <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-4">Name</label><input placeholder="姓名 (例: 我)" value={name} onChange={e => setName(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none ring-journey-green/20 focus:ring-4 transition-all" /></div>
+               <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-4">Avatar URL</label><input placeholder="頭像圖片網址" value={avatar} onChange={e => setAvatar(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-xs text-journey-brown/40 font-bold focus:outline-none" /></div>
             </div>
             <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-5 rounded-[2rem] shadow-lg active:scale-95 border-b-4 border-black/10 transition-all uppercase tracking-[0.2em]">儲存成員資料</button>
           </div>
