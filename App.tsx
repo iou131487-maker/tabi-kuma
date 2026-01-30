@@ -12,7 +12,6 @@ import PlanningView from './features/PlanningView';
 import MembersView from './features/MembersView';
 
 const DEFAULT_CONFIG = {
-  id: `trip-${Date.now()}`, // 產生初始永久 ID
   title: "我的夢幻行程",
   dateRange: "2025-01-01",
   userAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=traveler"
@@ -69,6 +68,14 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
   const [dateRange, setDateRange] = useState(config.dateRange);
   const [userAvatar, setUserAvatar] = useState(config.userAvatar);
 
+  useEffect(() => {
+    if (isOpen) {
+      setTitle(config.title);
+      setDateRange(config.dateRange);
+      setUserAvatar(config.userAvatar);
+    }
+  }, [isOpen, config]);
+
   if (!isOpen) return null;
 
   return (
@@ -90,6 +97,7 @@ const Navigation = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const currentPath = location.pathname.split('/')[1] || 'schedule';
+
   return (
     <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[220px] bg-white/80 backdrop-blur-2xl px-2 py-3 z-50 rounded-[2.5rem] shadow-2xl border border-white/20">
       <div className="flex justify-around items-center">
@@ -116,22 +124,35 @@ const AppContent = () => {
   const [initializing, setInitializing] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [tripConfig, setTripConfig] = useState(() => {
-    const saved = localStorage.getItem('trip_config');
-    let config = saved ? JSON.parse(saved) : DEFAULT_CONFIG;
-    // 確保一定有穩定 ID
-    if (!config.id) config.id = `trip-${Date.now()}`;
-    return config;
+    try {
+      const saved = localStorage.getItem('trip_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (!parsed.id) {
+          parsed.id = `trip-${Date.now()}`;
+          localStorage.setItem('trip_config', JSON.stringify(parsed));
+        }
+        return parsed;
+      }
+    } catch (e) { console.error("Config load error", e); }
+    const newConfig = { ...DEFAULT_CONFIG, id: `trip-${Date.now()}` };
+    localStorage.setItem('trip_config', JSON.stringify(newConfig));
+    return newConfig;
   });
 
   const currentPath = location.pathname.split('/')[1] || 'schedule';
   const bgColors = { schedule: '#E0F4FF', bookings: '#FFF0F3', expense: '#E6F7F2', journal: '#F4F0FF', planning: '#FFF9E6', members: '#FFF4E6' };
   const currentBg = bgColors[currentPath as keyof typeof bgColors] || bgColors.schedule;
 
-  useEffect(() => { document.body.style.backgroundColor = initializing ? '#BAE6FD' : currentBg; }, [currentBg, initializing]);
+  useEffect(() => { document.body.style.backgroundColor = currentBg; }, [currentBg]);
+  
   useEffect(() => {
     const startup = async () => {
-      try { await initSupabaseAuth(); if (isSupabaseConfigured) setIsLive(true); } 
-      catch (e) { setIsError(true); } finally { setTimeout(() => setInitializing(false), 1200); }
+      try { 
+        await initSupabaseAuth(); 
+        if (isSupabaseConfigured) setIsLive(true); 
+      } catch (e) { setIsError(true); } 
+      finally { setTimeout(() => setInitializing(false), 1200); }
     };
     startup();
   }, []);
