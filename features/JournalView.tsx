@@ -1,109 +1,104 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Camera, Heart, X, Send, Loader2, Trash2, MapPin } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { Camera, X, Loader2, Trash2, MapPin, Save, Edit3 } from 'lucide-react';
+import { supabase } from '../supabase';
 
 const JournalView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
-  const [journals, setJournals] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [content, setContent] = useState('');
-  const [location, setLocation] = useState('');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const tripId = tripConfig.id;
+  const [journals, setJournals] = useState<any[]>(() => {
+    const saved = localStorage.getItem(`jrnl_${tripId}`);
+    return saved ? JSON.parse(saved) : [];
+  });
+  
+  const [showModal, setShowModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<any | null>(null);
+  const [form, setForm] = useState({ content: '', location: '', imageUrl: null as string | null });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchJournals = useCallback(async () => {
-    if (!tripId) return;
-    setLoading(true);
-    
-    const localKey = `journals_${tripId}`;
-    const saved = localStorage.getItem(localKey);
-    if (saved) setJournals(JSON.parse(saved));
-
-    if (supabase && isSupabaseConfigured) {
-      try {
-        const { data, error } = await supabase.from('journals').select('*').eq('trip_id', tripId).order('created_at', { ascending: false });
-        if (!error && data) {
-          setJournals(data);
-          localStorage.setItem(localKey, JSON.stringify(data));
-        }
-      } catch (err) { console.error("Sync Error"); }
-    }
-    setLoading(false);
+  useEffect(() => {
+    const fetchSync = async () => {
+      if (!supabase || !tripId) return;
+      const { data } = await supabase.from('journals').select('*').eq('trip_id', tripId).order('created_at', { ascending: false });
+      if (data && data.length > 0) { 
+          setJournals(data); 
+          localStorage.setItem(`jrnl_${tripId}`, JSON.stringify(data)); 
+      }
+    };
+    fetchSync();
   }, [tripId]);
 
-  useEffect(() => { fetchJournals(); }, [fetchJournals]);
-
   const handleSave = async () => {
-    if (!content.trim()) return;
-
-    const newJournal = {
-      id: Date.now().toString(),
-      content,
-      location,
-      images: previewUrl ? [previewUrl] : [],
-      trip_id: tripId,
-      created_at: new Date().toISOString()
+    if (!form.content.trim()) return;
+    
+    const payload = {
+      id: editingItem?.id || `jr-${Date.now()}`,
+      ...form, images: form.imageUrl ? [form.imageUrl] : [],
+      trip_id: tripId, created_at: editingItem?.created_at || new Date().toISOString()
     };
-
-    if (supabase && isSupabaseConfigured) {
-      const { error } = await supabase.from('journals').insert([newJournal]);
-      if (error) return alert("日誌發佈失敗");
-    }
-
-    const updated = [newJournal, ...journals];
+    
+    // 立即更新與關閉
+    const updated = editingItem ? journals.map(j => j.id === editingItem.id ? payload : j) : [payload, ...journals];
     setJournals(updated);
-    localStorage.setItem(`journals_${tripId}`, JSON.stringify(updated));
-    resetForm();
+    localStorage.setItem(`jrnl_${tripId}`, JSON.stringify(updated));
+    setShowModal(false); 
+    setEditingItem(null); 
+    setForm({ content: '', location: '', imageUrl: null });
+
+    // 背景同步
+    try {
+      if (supabase) await supabase.from('journals').upsert(payload);
+    } catch (e) { console.error(e); }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('確定刪除？')) return;
-    if (supabase && isSupabaseConfigured) {
-      await supabase.from('journals').delete().eq('id', id);
-    }
-    const updated = journals.filter(j => j.id !== id);
-    setJournals(updated);
-    localStorage.setItem(`journals_${tripId}`, JSON.stringify(updated));
+    if (!confirm('確定刪除回憶？')) return;
+    const filtered = journals.filter(j => j.id !== id);
+    setJournals(filtered);
+    localStorage.setItem(`jrnl_${tripId}`, JSON.stringify(filtered));
+    if (supabase) await supabase.from('journals').delete().eq('id', id);
   };
-
-  const resetForm = () => { setContent(''); setLocation(''); setPreviewUrl(null); setShowAddModal(false); };
 
   return (
     <div className="space-y-6 pb-24">
       <div className="flex justify-between items-center px-2">
-        <h2 className="text-2xl font-black text-journey-brown uppercase italic">Journal</h2>
-        <button onClick={() => setShowAddModal(true)} className="w-14 h-14 bg-journey-red text-white rounded-3xl shadow-soft flex items-center justify-center active:scale-90"><Camera size={24} /></button>
+        <h2 className="text-2xl font-black text-journey-brown italic uppercase tracking-tighter">Journal</h2>
+        <button onClick={() => { setEditingItem(null); setForm({ content: '', location: '', imageUrl: null }); setShowModal(true); }} className="w-12 h-12 bg-journey-red text-white rounded-2xl shadow-soft flex items-center justify-center active:scale-90 transition-transform"><Camera size={24} /></button>
       </div>
 
-      <div className="space-y-8">
+      <div className="space-y-12">
         {journals.map((item) => (
-          <div key={item.id} className="bg-white rounded-[3rem] overflow-hidden shadow-soft border-4 border-white animate-in slide-in-from-bottom-8">
-            {item.images && item.images[0] && (<img src={item.images[0]} className="w-full aspect-video object-cover" />)}
-            <div className="p-8 space-y-4">
+          <div key={item.id} className="bg-white p-6 rounded-[2.5rem] shadow-soft border-4 border-white animate-in zoom-in-95">
+            {item.images?.[0] && (<div className="aspect-square bg-journey-cream rounded-[1.5rem] overflow-hidden border-2 border-journey-cream mb-6"><img src={item.images[0]} className="w-full h-full object-cover" alt="Memory" /></div>)}
+            <div className="space-y-4">
               <div className="flex justify-between items-start">
-                <div className="flex items-center gap-2 text-journey-blue"><MapPin size={14} /><span>{item.location || 'Unknown'}</span></div>
-                <button onClick={() => handleDelete(item.id)} className="text-journey-brown/10 hover:text-journey-red"><Trash2 size={16}/></button>
+                <div className="flex items-center gap-2 text-journey-blue font-black uppercase text-[10px] tracking-widest bg-journey-blue/10 px-3 py-1 rounded-full"><MapPin size={12} /><span>{item.location || 'Somewhere'}</span></div>
+                <div className="flex gap-2">
+                  <button onClick={() => { setEditingItem(item); setForm({ content: item.content, location: item.location, imageUrl: item.images[0] }); setShowModal(true); }} className="p-2 text-journey-blue"><Edit3 size={18}/></button>
+                  <button onClick={() => handleDelete(item.id)} className="p-2 text-journey-red"><Trash2 size={18}/></button>
+                </div>
               </div>
-              <p className="text-journey-brown font-bold leading-relaxed italic">{item.content}</p>
+              <p className="text-journey-brown font-bold leading-relaxed italic text-lg">{item.content}</p>
+              <p className="text-[10px] font-black opacity-20 uppercase tracking-widest">{new Date(item.created_at).toLocaleDateString()}</p>
             </div>
           </div>
         ))}
       </div>
 
-      {showAddModal && (
-        <div className="fixed inset-0 z-[110] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
-          <div className="bg-white w-full max-w-sm rounded-t-[3.5rem] sm:rounded-[3rem] p-8 shadow-2xl space-y-6 overflow-y-auto max-h-[90vh]">
+      {showModal && (
+        <div className="fixed inset-0 z-[200] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-t-[4rem] sm:rounded-[3rem] p-10 shadow-2xl space-y-6 max-h-[95vh] overflow-y-auto relative">
+            <button onClick={() => setShowModal(false)} className="absolute right-10 top-10 text-journey-brown/20"><X /></button>
             <h3 className="text-xl font-black text-journey-brown italic">New Memory</h3>
-            <div onClick={() => fileInputRef.current?.click()} className="aspect-video bg-journey-cream rounded-[2.5rem] border-4 border-dashed border-journey-sand flex flex-col items-center justify-center cursor-pointer overflow-hidden shadow-inner">
-               {previewUrl ? <img src={previewUrl} className="w-full h-full object-cover" /> : <Camera size={32} className="opacity-30" />}
-               <input type="file" ref={fileInputRef} className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onloadend = () => setPreviewUrl(r.result as string); r.readAsDataURL(f); } }} />
+            <div onClick={() => fileInputRef.current?.click()} className="aspect-square bg-journey-cream rounded-3xl border-4 border-dashed border-journey-sand flex flex-col items-center justify-center cursor-pointer overflow-hidden relative">
+              {form.imageUrl ? <img src={form.imageUrl} className="w-full h-full object-cover" alt="Preview" /> : <Camera size={48} className="opacity-10" />}
+              <input type="file" ref={fileInputRef} className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onloadend = () => setForm({...form, imageUrl: r.result as string}); r.readAsDataURL(f); } }} />
             </div>
-            <textarea placeholder="這一刻的心情是..." value={content} onChange={e => setContent(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 font-bold min-h-[150px] focus:outline-none shadow-inner resize-none" />
-            <button onClick={handleSave} className="w-full bg-journey-red text-white font-black py-5 rounded-[2.5rem] shadow-lg">發佈日誌</button>
-            <button onClick={() => setShowAddModal(false)} className="w-full text-journey-brown/30 font-black">取消</button>
+            <input placeholder="地點" value={form.location} onChange={e => setForm({...form, location: e.target.value})} className="w-full bg-journey-cream rounded-2xl p-4 font-black focus:outline-none" />
+            <textarea placeholder="心情感言..." value={form.content} onChange={e => setForm({...form, content: e.target.value})} className="w-full bg-journey-cream rounded-2xl p-5 font-bold min-h-[120px] focus:outline-none resize-none shadow-inner" />
+            <button onClick={handleSave} className="w-full bg-journey-red text-white font-black py-6 rounded-[2rem] shadow-lg flex items-center justify-center gap-2 active:scale-95">
+              <Save size={20} /> 發佈回憶
+            </button>
+            <button onClick={() => setShowModal(false)} className="w-full text-journey-brown/20 font-black py-2">取消</button>
           </div>
         </div>
       )}
