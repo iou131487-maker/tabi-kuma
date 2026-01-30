@@ -14,8 +14,8 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [bookingTime, setBookingTime] = useState('');
   const [details, setDetails] = useState<any>({ from: '', to: '', flightNo: '', address: '', note: '' });
 
-  // 統一 tripId 生成邏輯，避免重新整理後資料消失
-  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
+  // 永遠使用永久 ID
+  const tripId = tripConfig.id || 'default-trip';
 
   const fetchBookings = async () => {
     setLoading(true);
@@ -63,6 +63,16 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
     resetForm();
   };
 
+  const handleDelete = (id: string) => {
+    if (!confirm('要刪除這張憑證嗎？')) return;
+    const updated = bookings.filter(b => b.id !== id);
+    setBookings(updated);
+    localStorage.setItem(`bookings_${tripId}`, JSON.stringify(updated));
+    if (supabase && isSupabaseConfigured) {
+      supabase.from('bookings').delete().eq('id', id).then();
+    }
+  };
+
   const resetForm = () => { setTitle(''); setBookingDate(''); setBookingTime(''); setDetails({ from: '', to: '', flightNo: '', address: '', note: '' }); };
 
   const renderBoardingPass = (item: any) => {
@@ -74,6 +84,8 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
           <div className="bg-white rounded-[2.5rem] shadow-soft overflow-hidden flex flex-col sm:flex-row border-2 border-journey-sand/20">
             {/* 登機證主體 */}
             <div className="flex-grow p-8 relative">
+              <button onClick={() => handleDelete(item.id)} className="absolute top-4 right-4 p-2 text-journey-brown/10 hover:text-journey-red opacity-0 group-hover:opacity-100 transition-all"><X size={16}/></button>
+              
               <div className="flex justify-between items-start mb-8">
                 <div className="flex items-center gap-4">
                   <div className="p-3.5 bg-journey-blue text-white rounded-2xl shadow-sm rotate-[-5deg] border-2 border-white/50">
@@ -119,7 +131,7 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
                 </div>
               </div>
 
-              {/* 打孔視覺效果 - 使用絕對定位呈現兩側凹陷感 */}
+              {/* 打孔視覺效果 */}
               <div className="hidden sm:block absolute right-[-14px] top-[-14px] w-7 h-7 bg-journey-cream rounded-full z-10 shadow-inner"></div>
               <div className="hidden sm:block absolute right-[-14px] bottom-[-14px] w-7 h-7 bg-journey-cream rounded-full z-10 shadow-inner"></div>
             </div>
@@ -140,7 +152,7 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
     }
 
     return (
-      <div key={item.id} className="bg-white rounded-[2rem] p-6 shadow-soft flex items-center justify-between border-2 border-journey-sand/10">
+      <div key={item.id} className="bg-white rounded-[2rem] p-6 shadow-soft flex items-center justify-between border-2 border-journey-sand/10 group relative">
         <div className="flex items-center gap-5">
           <div className="p-4 bg-journey-cream rounded-2xl text-journey-brown/40">
             {item.type === 'hotel' ? <Hotel size={24} /> : item.type === 'car' ? <Car size={24} /> : <Ticket size={24} />}
@@ -150,7 +162,10 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
             <p className="text-[10px] font-bold text-journey-brown/30 uppercase tracking-[0.2em] mt-0.5">{item.details?.time}</p>
           </div>
         </div>
-        <div className="p-3 bg-journey-cream rounded-2xl"><QrCode size={24} className="text-journey-brown/10" /></div>
+        <div className="flex items-center gap-4">
+           <button onClick={() => handleDelete(item.id)} className="p-2 text-journey-brown/10 hover:text-journey-red opacity-0 group-hover:opacity-100 transition-all"><X size={20}/></button>
+           <div className="p-3 bg-journey-cream rounded-2xl"><QrCode size={24} className="text-journey-brown/10" /></div>
+        </div>
       </div>
     );
   };
