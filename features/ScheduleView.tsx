@@ -21,33 +21,15 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
 
   const days = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
   
-  // 永遠使用永久 ID
   const tripId = tripConfig.id || 'default-trip';
-
-  const getCountdown = () => {
-    try {
-      if (!tripConfig.dateRange) return { label: '行程準備中', value: '??', unit: 'DAYS' };
-      const dateStr = tripConfig.dateRange.split('-')[0].trim();
-      const startDate = new Date(dateStr);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      startDate.setHours(0, 0, 0, 0);
-      const diffTime = startDate.getTime() - today.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      if (diffDays > 0) return { label: '期待出發', value: diffDays, unit: 'DAYS TO GO' };
-      if (diffDays === 0) return { label: '旅程展開', value: 'Today', unit: 'ENJOY!' };
-      return { label: '回味旅行', value: Math.abs(diffDays), unit: 'DAYS AGO' };
-    } catch (e) {
-      return { label: '行程準備中', value: '??', unit: 'DAYS' };
-    }
-  };
-
-  const countdown = getCountdown();
 
   const fetchSchedule = async () => {
     setLoading(true);
+    
+    // 優先讀取本地快取
     const saved = localStorage.getItem(`schedule_${tripId}_day_${selectedDay}`);
-    let dataToSet = saved ? JSON.parse(saved) : [];
+    let localData = saved ? JSON.parse(saved) : [];
+    setScheduleData(localData);
 
     if (isSupabaseConfigured && supabase) {
       try {
@@ -58,16 +40,16 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
           .eq('day_index', selectedDay)
           .order('time', { ascending: true });
 
+        // 僅在雲端有資料時覆蓋
         if (!error && data && data.length > 0) {
-          dataToSet = data;
+          setScheduleData(data);
           localStorage.setItem(`schedule_${tripId}_day_${selectedDay}`, JSON.stringify(data));
         }
       } catch (e) {
-        console.warn("Cloud fetch failed, using local/demo data");
+        console.warn("Cloud fetch failed");
       }
     }
     
-    setScheduleData(dataToSet);
     setLoading(false);
   };
 
@@ -78,10 +60,7 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   useEffect(() => {
     const fetchAiTip = async () => {
       const apiKey = process.env.API_KEY;
-      if (!apiKey) {
-        setAiTip(`準備好開始你的「${tripConfig.title}」了嗎？記得多拍些照片喔 🐻`);
-        return;
-      }
+      if (!apiKey) return;
       try {
         const ai = new GoogleGenAI({ apiKey });
         const prompt = scheduleData.length > 0 
@@ -179,9 +158,8 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
            <Compass size={120} className="text-journey-brown" />
         </div>
         <div className="relative z-10">
-          <p className="text-[10px] font-black text-journey-brown/40 uppercase tracking-[0.2em]">{countdown.label}</p>
-          <h2 className="text-4xl font-black text-journey-brown mt-1 tracking-tight">{countdown.value}</h2>
-          <p className="text-[8px] font-black text-journey-brown/60 tracking-[0.3em] mt-1">{countdown.unit}</p>
+          <p className="text-[10px] font-black text-journey-brown/40 uppercase tracking-[0.2em]">行程準備中</p>
+          <h2 className="text-4xl font-black text-journey-brown mt-1 tracking-tight">Enjoy!</h2>
         </div>
         <div className="relative z-10 bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/40 flex flex-col items-center justify-center min-w-[80px]">
            <Sparkles className="text-journey-brown/30 mb-1" size={16} />
@@ -217,12 +195,12 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       </div>
 
       <div className="relative">
-        {loading ? (
+        {loading && scheduleData.length === 0 ? (
           <div className="flex justify-center py-20 opacity-30"><Loader2 className="animate-spin" /></div>
         ) : scheduleData.length === 0 ? (
           <div className="bg-white/40 rounded-4xl p-16 text-center border-4 border-dashed border-journey-sand">
             <CalendarIcon size={40} className="mx-auto text-journey-sand mb-4" />
-            <p className="text-journey-brown/40 text-sm font-black leading-relaxed">開始規劃你的「{tripConfig.title}」吧 ✨</p>
+            <p className="text-journey-brown/40 text-sm font-black leading-relaxed">開始規劃行程吧 ✨</p>
           </div>
         ) : (
           <div className="space-y-5 relative before:absolute before:left-[21px] before:top-4 before:bottom-4 before:w-1 before:bg-journey-sand/50">
