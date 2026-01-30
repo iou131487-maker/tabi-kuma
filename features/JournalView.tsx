@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Camera, Heart, MessageCircle, X, Send, Loader2, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
-const JournalView: React.FC = () => {
+const JournalView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [journals, setJournals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -13,7 +14,7 @@ const JournalView: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const tripId = 'hokkaido-2024';
+  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
 
   const fetchJournals = async () => {
     if (!isSupabaseConfigured || !supabase) {
@@ -56,7 +57,7 @@ const JournalView: React.FC = () => {
         .subscribe();
       return () => { supabase.removeChannel(channel); };
     }
-  }, []);
+  }, [tripId]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
