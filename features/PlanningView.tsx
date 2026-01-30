@@ -16,8 +16,8 @@ const PlanningView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 統一 tripId 生成邏輯
-  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
+  // 永遠使用永久 ID
+  const tripId = tripConfig.id || 'default-trip';
 
   const fetchData = async () => {
     setLoading(true);
