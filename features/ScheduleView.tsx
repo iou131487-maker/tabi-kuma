@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { CATEGORY_ICONS, THEME_COLORS } from '../constants';
-import { Clock, MapPin, Sparkles, Loader2, Plus, Send, X, Calendar as CalendarIcon, Save, Trash2, Compass, ExternalLink } from 'lucide-react';
+import { Clock, MapPin, Sparkles, Loader2, Plus, Send, X, Calendar as CalendarIcon, Save, Trash2, Compass } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { supabase, isSupabaseConfigured } from '../supabase';
 
@@ -11,11 +11,9 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [loading, setLoading] = useState(true);
   const [aiTip, setAiTip] = useState<string>('旅人，今天想去哪裡旅行呢？🌸');
   
-  // Modals state
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingItem, setEditingItem] = useState<any | null>(null);
 
-  // Form states
   const [newLocation, setNewLocation] = useState('');
   const [newTime, setNewTime] = useState('12:00');
   const [newCategory, setNewCategory] = useState('attraction');
@@ -23,7 +21,8 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
 
   const days = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
   
-  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
+  // 永遠使用永久 ID
+  const tripId = tripConfig.id || 'default-trip';
 
   const getCountdown = () => {
     try {
