@@ -12,6 +12,7 @@ import PlanningView from './features/PlanningView';
 import MembersView from './features/MembersView';
 
 const DEFAULT_CONFIG = {
+  id: `trip-${Date.now()}`, // 產生初始永久 ID
   title: "我的夢幻行程",
   dateRange: "2025-01-01",
   userAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=traveler"
@@ -116,7 +117,10 @@ const AppContent = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [tripConfig, setTripConfig] = useState(() => {
     const saved = localStorage.getItem('trip_config');
-    return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+    let config = saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+    // 確保一定有穩定 ID
+    if (!config.id) config.id = `trip-${Date.now()}`;
+    return config;
   });
 
   const currentPath = location.pathname.split('/')[1] || 'schedule';
@@ -132,7 +136,11 @@ const AppContent = () => {
     startup();
   }, []);
 
-  const handleSaveConfig = (newConfig: any) => { setTripConfig(newConfig); localStorage.setItem('trip_config', JSON.stringify(newConfig)); setShowSettings(false); };
+  const handleSaveConfig = (newConfig: any) => { 
+    setTripConfig(newConfig); 
+    localStorage.setItem('trip_config', JSON.stringify(newConfig)); 
+    setShowSettings(false); 
+  };
 
   if (initializing) return (
     <div className="h-screen w-screen bg-[#BAE6FD] flex flex-col items-center justify-center space-y-10 overflow-hidden relative">
