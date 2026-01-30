@@ -14,9 +14,10 @@ const JournalView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
+  const tripId = tripConfig.id || 'default-trip';
 
   const fetchJournals = async () => {
+    setLoading(true);
     if (!isSupabaseConfigured || !supabase) {
       setJournals([
         {
