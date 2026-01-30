@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Plane, Hotel, Ticket, Plus, X, Send, MapPin, Loader2, Calendar, Car, Tag, QrCode } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
-const BookingsView: React.FC = () => {
+const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -14,7 +14,8 @@ const BookingsView: React.FC = () => {
   const [bookingTime, setBookingTime] = useState('');
   const [details, setDetails] = useState<any>({ from: '', to: '', flightNo: '', address: '', note: '' });
 
-  const tripId = 'hokkaido-2024';
+  // 統一 tripId 生成邏輯，避免重新整理後資料消失
+  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
 
   const fetchBookings = async () => {
     setLoading(true);
@@ -36,7 +37,7 @@ const BookingsView: React.FC = () => {
     setLoading(false);
   };
 
-  useEffect(() => { fetchBookings(); }, []);
+  useEffect(() => { fetchBookings(); }, [tripId]);
 
   const handleSave = async () => {
     const finalTitle = type === 'flight' ? `${details.from} → ${details.to}` : title;
@@ -75,11 +76,11 @@ const BookingsView: React.FC = () => {
             <div className="flex-grow p-8 relative">
               <div className="flex justify-between items-start mb-8">
                 <div className="flex items-center gap-4">
-                  <div className="p-3.5 bg-journey-blue text-white rounded-2xl shadow-sm rotate-[-5deg]">
+                  <div className="p-3.5 bg-journey-blue text-white rounded-2xl shadow-sm rotate-[-5deg] border-2 border-white/50">
                     <Plane size={28} strokeWidth={2.5} />
                   </div>
                   <div>
-                    <p className="text-[10px] font-black text-journey-blue uppercase tracking-[0.3em]">Tabi-Kuma Airways</p>
+                    <p className="text-[10px] font-black text-journey-blue uppercase tracking-[0.3em] leading-none mb-1">Dodo Airlines</p>
                     <h4 className="text-2xl font-black text-journey-brown tracking-tighter">BOARDING PASS</h4>
                   </div>
                 </div>
@@ -95,9 +96,9 @@ const BookingsView: React.FC = () => {
                   <p className="text-[10px] font-bold text-journey-brown/30 mt-1 uppercase tracking-widest">Departure</p>
                 </div>
                 <div className="flex-grow px-8 flex flex-col items-center">
-                   <div className="w-full h-[3px] bg-journey-sand relative rounded-full">
+                   <div className="w-full h-[2px] bg-journey-sand/40 relative">
                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white px-3">
-                        <Plane size={18} className="text-journey-blue fill-current" />
+                        <Plane size={18} className="text-journey-blue fill-current rotate-90 sm:rotate-0" />
                      </div>
                    </div>
                 </div>
@@ -114,11 +115,11 @@ const BookingsView: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-[9px] font-black text-journey-brown/20 uppercase tracking-widest">Passenger</p>
-                  <p className="text-sm font-black text-journey-brown uppercase">Island Resident</p>
+                  <p className="text-sm font-black text-journey-brown uppercase">Traveler</p>
                 </div>
               </div>
 
-              {/* 打孔視覺效果 */}
+              {/* 打孔視覺效果 - 使用絕對定位呈現兩側凹陷感 */}
               <div className="hidden sm:block absolute right-[-14px] top-[-14px] w-7 h-7 bg-journey-cream rounded-full z-10 shadow-inner"></div>
               <div className="hidden sm:block absolute right-[-14px] bottom-[-14px] w-7 h-7 bg-journey-cream rounded-full z-10 shadow-inner"></div>
             </div>
@@ -201,11 +202,11 @@ const BookingsView: React.FC = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-3">Origin</label>
-                      <input placeholder="HND" value={details.from} onChange={e => setDetails({...details, from: e.target.value.toUpperCase()})} className="w-full bg-journey-cream p-5 rounded-3xl text-sm font-black focus:outline-none" />
+                      <input placeholder="HND" value={details.from} onChange={e => setDetails({...details, from: e.target.value.toUpperCase()})} className="w-full bg-journey-cream p-5 rounded-3xl text-sm font-black focus:outline-none ring-journey-green focus:ring-4 transition-all" />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-3">Dest.</label>
-                      <input placeholder="CTS" value={details.to} onChange={e => setDetails({...details, to: e.target.value.toUpperCase()})} className="w-full bg-journey-cream p-5 rounded-3xl text-sm font-black focus:outline-none" />
+                      <input placeholder="CTS" value={details.to} onChange={e => setDetails({...details, to: e.target.value.toUpperCase()})} className="w-full bg-journey-cream p-5 rounded-3xl text-sm font-black focus:outline-none ring-journey-green focus:ring-4 transition-all" />
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -237,7 +238,7 @@ const BookingsView: React.FC = () => {
               </div>
             </div>
             <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-6 rounded-[2.5rem] shadow-lg active:scale-95 border-b-4 border-black/10 transition-all uppercase tracking-[0.2em] flex items-center justify-center gap-3">
-              <Plus size={20} /> Generate Pass
+              <Plus size={20} strokeWidth={3} /> Generate Pass
             </button>
           </div>
         </div>
