@@ -7,7 +7,7 @@ import {
   Hotel, 
   Car, 
   Tag, 
-  Circle, 
+  Coins, 
   Calendar, 
   CreditCard, 
   BookOpen, 
@@ -34,7 +34,7 @@ export const CATEGORY_ICONS = {
 export const NAV_ITEMS = [
   { id: 'schedule', label: '行程', icon: <Calendar size={20} /> },
   { id: 'bookings', label: '預訂', icon: <CreditCard size={20} /> },
-  { id: 'expense', label: '記帳', icon: <Circle size={20} /> },
+  { id: 'expense', label: '記帳', icon: <Coins size={20} /> },
   { id: 'journal', label: '日誌', icon: <BookOpen size={20} /> },
   { id: 'planning', label: '準備', icon: <CheckSquare size={20} /> },
   { id: 'members', label: '成員', icon: <Users size={20} /> },
