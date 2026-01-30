@@ -1,89 +1,93 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserPlus, Loader2, X, Send, Trash2 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { UserPlus, Loader2, X, Trash2, Edit2, Save } from 'lucide-react';
+import { supabase } from '../supabase';
 
 const MembersView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
-  const [members, setMembers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const tripId = tripConfig.id;
+  const [members, setMembers] = useState<any[]>(() => {
+    const saved = localStorage.getItem(`mem_${tripId}`);
+    return saved ? JSON.parse(saved) : [{ id: 'me', name: '我', avatar: tripConfig.userAvatar }];
+  });
+  
   const [showForm, setShowForm] = useState(false);
+  const [editingItem, setEditingItem] = useState<any | null>(null);
   const [name, setName] = useState('');
 
-  const tripId = tripConfig.id;
-
-  const fetchMembers = useCallback(async () => {
-    if (!tripId) return;
-    setLoading(true);
-    
-    const localKey = `members_${tripId}`;
-    const saved = localStorage.getItem(localKey);
-    if (saved) setMembers(JSON.parse(saved));
-    else setMembers([{ id: '1', name: '我', avatar: tripConfig.userAvatar }]);
-
-    if (supabase && isSupabaseConfigured) {
-      try {
-        const { data } = await supabase.from('members').select('*').eq('trip_id', tripId);
-        if (data && data.length > 0) {
-          setMembers(data);
-          localStorage.setItem(localKey, JSON.stringify(data));
-        }
-      } catch { console.error("Sync Error"); }
-    }
-    setLoading(false);
-  }, [tripId, tripConfig.userAvatar]);
-
-  useEffect(() => { fetchMembers(); }, [fetchMembers]);
+  useEffect(() => {
+    const fetchSync = async () => {
+      if (!supabase || !tripId) return;
+      const { data } = await supabase.from('members').select('*').eq('trip_id', tripId);
+      if (data && data.length > 0) { 
+          setMembers(data); 
+          localStorage.setItem(`mem_${tripId}`, JSON.stringify(data)); 
+      }
+    };
+    fetchSync();
+  }, [tripId]);
 
   const handleSave = async () => {
-    if (!name) return;
-    const payload = { id: Date.now().toString(), name, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`, trip_id: tripId };
+    if (!name.trim()) return;
     
-    if (supabase && isSupabaseConfigured) {
-      await supabase.from('members').insert([payload]);
-    }
-
-    const updated = [...members, payload];
+    const payload = { 
+      id: editingItem?.id || `me-${Date.now()}`, 
+      name, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`, 
+      trip_id: tripId 
+    };
+    
+    // 立即更新與關閉
+    const updated = editingItem ? members.map(m => m.id === editingItem.id ? payload : m) : [...members, payload];
     setMembers(updated);
-    localStorage.setItem(`members_${tripId}`, JSON.stringify(updated));
+    localStorage.setItem(`mem_${tripId}`, JSON.stringify(updated));
+    setShowForm(false); 
+    setEditingItem(null); 
     setName('');
-    setShowForm(false);
+
+    // 背景同步
+    try {
+      if (supabase) await supabase.from('members').upsert(payload);
+    } catch (e) { console.error(e); }
   };
 
   const handleDelete = async (id: string) => {
-    if (members.find(m => m.id === id)?.name === '我') return alert('不可刪除自己');
-    if (!confirm('移除成員？')) return;
-    if (supabase && isSupabaseConfigured) {
-      await supabase.from('members').delete().eq('id', id);
-    }
-    const updated = members.filter(m => m.id !== id);
-    setMembers(updated);
-    localStorage.setItem(`members_${tripId}`, JSON.stringify(updated));
+    if (id === 'me' || members.find(m => m.id === id)?.name === '我') return alert('不可刪除自己');
+    if (!confirm('移除夥伴？')) return;
+    
+    const filtered = members.filter(m => m.id !== id);
+    setMembers(filtered);
+    localStorage.setItem(`mem_${tripId}`, JSON.stringify(filtered));
+    if (supabase) await supabase.from('members').delete().eq('id', id);
   };
 
   return (
     <div className="space-y-6 pb-24">
       <div className="flex items-center justify-between px-2">
-        <h2 className="text-2xl font-black text-journey-brown uppercase italic">Partners</h2>
-        <button onClick={() => setShowForm(true)} className="w-14 h-14 bg-journey-accent text-white rounded-3xl shadow-soft flex items-center justify-center active:scale-90"><UserPlus size={24} /></button>
+        <h2 className="text-2xl font-black text-journey-brown italic uppercase tracking-tighter">Partners</h2>
+        <button onClick={() => { setEditingItem(null); setName(''); setShowForm(true); }} className="w-12 h-12 bg-journey-accent text-white rounded-2xl shadow-soft flex items-center justify-center active:scale-90 transition-transform"><UserPlus size={24} /></button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {members.map((member) => (
-          <div key={member.id} className="bg-white rounded-4xl p-5 flex items-center gap-4 shadow-soft border-2 border-white group">
-             <div className="w-16 h-16 rounded-3xl overflow-hidden border-4 border-journey-cream shadow-sm shrink-0"><img src={member.avatar} className="w-full h-full object-cover" /></div>
-             <div className="flex-grow"><h4 className="font-black text-journey-brown text-lg">{member.name}</h4></div>
-             <button onClick={() => handleDelete(member.id)} className="w-10 h-10 rounded-2xl bg-journey-cream flex items-center justify-center text-journey-brown/10 hover:text-journey-red"><Trash2 size={16} /></button>
+      <div className="grid grid-cols-1 gap-5">
+        {members.map((m) => (
+          <div key={m.id} className="bg-white rounded-[2.5rem] p-6 flex items-center gap-6 shadow-soft border-4 border-white transition-all hover:border-journey-accent animate-in zoom-in-95">
+             <div className="w-20 h-20 rounded-[1.8rem] overflow-hidden border-4 border-journey-cream shadow-inner shrink-0"><img src={m.avatar} className="w-full h-full object-cover" alt="Avatar" /></div>
+             <div className="flex-grow"><h4 className="font-black text-journey-brown text-xl leading-none">{m.name}</h4><p className="text-[10px] font-bold opacity-30 uppercase tracking-[0.2em] mt-2">Dream Partner</p></div>
+             <div className="flex flex-col gap-2">
+               <button onClick={() => { setEditingItem(m); setName(m.name); setShowForm(true); }} className="p-2 text-journey-blue"><Edit2 size={18}/></button>
+               <button onClick={() => handleDelete(m.id)} className="p-2 text-journey-red"><Trash2 size={18}/></button>
+             </div>
           </div>
         ))}
       </div>
 
       {showForm && (
-        <div className="fixed inset-0 z-[110] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
-          <div className="bg-white w-full max-w-sm rounded-t-[3.5rem] sm:rounded-[3rem] p-8 shadow-2xl space-y-6">
-            <h3 className="text-xl font-black text-journey-brown italic">New Friend</h3>
-            <input placeholder="夥伴姓名" value={name} onChange={e => setName(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 font-black focus:outline-none shadow-inner" />
-            <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-5 rounded-[2rem] shadow-lg active:scale-95">儲存</button>
-            <button onClick={() => setShowForm(false)} className="w-full text-journey-brown/30 font-black">取消</button>
+        <div className="fixed inset-0 z-[200] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-t-[4rem] sm:rounded-[3.5rem] p-10 shadow-2xl space-y-8 animate-in slide-in-from-bottom-10">
+            <h3 className="text-xl font-black text-journey-brown italic">{editingItem ? 'Edit' : 'Add'} Partner</h3>
+            <input placeholder="夥伴姓名" value={name} onChange={e => setName(e.target.value)} className="w-full bg-journey-cream rounded-2xl p-6 font-black focus:outline-none" />
+            <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-6 rounded-[2rem] shadow-lg flex items-center justify-center gap-2 active:scale-95">
+              <Save size={20} /> 確認儲存
+            </button>
+            <button onClick={() => setShowForm(false)} className="w-full text-journey-brown/20 font-black py-2">取消</button>
           </div>
         </div>
       )}
