@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plane, Hotel, Ticket, Plus, X, Send, MapPin, Loader2, Calendar, Car, Tag, QrCode, Trash2 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
@@ -14,18 +14,17 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [bookingTime, setBookingTime] = useState('');
   const [details, setDetails] = useState<any>({ from: '', to: '', flightNo: '', address: '', note: '' });
 
-  const tripId = tripConfig.id || 'default-trip';
+  const tripId = tripConfig.id;
 
-  const fetchBookings = async () => {
+  const fetchBookings = useCallback(async () => {
+    if (!tripId) return;
     setLoading(true);
     
-    // 1. 本地快取載入
-    const saved = localStorage.getItem(`bookings_${tripId}`);
-    if (saved) {
-      setBookings(JSON.parse(saved));
-    } else {
-      setBookings([]);
-    }
+    // 1. 本地優先
+    const localKey = `bookings_${tripId}`;
+    const saved = localStorage.getItem(localKey);
+    if (saved) setBookings(JSON.parse(saved));
+    else setBookings([]);
 
     // 2. 雲端同步
     if (supabase && isSupabaseConfigured) {
@@ -36,22 +35,16 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
           .eq('trip_id', tripId)
           .order('created_at', { ascending: false });
           
-        if (!error) {
-          // 強制覆蓋本地，確保手機端資料與雲端一致
-          const finalData = data || [];
-          setBookings(finalData);
-          localStorage.setItem(`bookings_${tripId}`, JSON.stringify(finalData));
+        if (!error && data) {
+          setBookings(data);
+          localStorage.setItem(localKey, JSON.stringify(data));
         }
-      } catch (e) { 
-        console.warn("Booking Sync Failed"); 
-      }
+      } catch (e) { console.error("Booking Fetch Error"); }
     }
     setLoading(false);
-  };
-
-  useEffect(() => { 
-    fetchBookings(); 
   }, [tripId]);
+
+  useEffect(() => { fetchBookings(); }, [fetchBookings]);
 
   const handleSave = async () => {
     const finalTitle = type === 'flight' ? `${details.from} → ${details.to}` : title;
@@ -65,26 +58,34 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       created_at: new Date().toISOString()
     };
 
+    // 雙重持久化：先寫雲端
+    if (supabase && isSupabaseConfigured) {
+      const { error } = await supabase.from('bookings').insert([payload]);
+      if (error) return alert("儲存失敗");
+    }
+
+    // 成功後更新本地與狀態
+    const localKey = `bookings_${tripId}`;
     const updated = [payload, ...bookings];
     setBookings(updated);
-    localStorage.setItem(`bookings_${tripId}`, JSON.stringify(updated));
-
-    if (supabase && isSupabaseConfigured) {
-      supabase.from('bookings').insert([payload]).then();
-    }
+    localStorage.setItem(localKey, JSON.stringify(updated));
 
     setShowAddModal(false);
     resetForm();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('要刪除這張憑證嗎？')) return;
+    
+    if (supabase && isSupabaseConfigured) {
+      const { error } = await supabase.from('bookings').delete().eq('id', id);
+      if (error) return alert("刪除失敗");
+    }
+
+    const localKey = `bookings_${tripId}`;
     const updated = bookings.filter(b => b.id !== id);
     setBookings(updated);
-    localStorage.setItem(`bookings_${tripId}`, JSON.stringify(updated));
-    if (supabase && isSupabaseConfigured) {
-      supabase.from('bookings').delete().eq('id', id).then();
-    }
+    localStorage.setItem(localKey, JSON.stringify(updated));
   };
 
   const resetForm = () => { setTitle(''); setBookingDate(''); setBookingTime(''); setDetails({ from: '', to: '', flightNo: '', address: '', note: '' }); };
@@ -145,7 +146,7 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       ) : bookings.length === 0 ? (
         <div className="bg-white/40 rounded-[3rem] p-16 text-center border-4 border-dashed border-journey-sand opacity-50">
           <Plane size={48} className="mx-auto text-journey-sand mb-4" />
-          <p className="text-sm font-black text-journey-brown">準備好要去哪裡冒險了嗎？✨</p>
+          <p className="text-sm font-black text-journey-brown">還沒有預訂紀錄喔 ✨</p>
         </div>
       ) : (
         <div className="space-y-8">{bookings.map((item) => renderBoardingPass(item))}</div>
@@ -154,8 +155,8 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       {showAddModal && (
         <div className="fixed inset-0 z-[100] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
           <div className="bg-white w-full max-w-sm rounded-t-[4rem] sm:rounded-[3.5rem] p-10 shadow-2xl space-y-8 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center"><h3 className="text-2xl font-black text-journey-brown">New Pass</h3><button onClick={() => setShowAddModal(false)} className="p-3 bg-journey-cream rounded-full text-journey-brown/30"><X size={20} /></button></div>
-            <div className="flex bg-journey-cream p-2 rounded-3xl gap-2">{(['flight', 'hotel', 'car', 'ticket'] as const).map(t => (<button key={t} onClick={() => setType(t)} className={`flex-1 py-3 rounded-2xl text-[10px] font-black ${type === t ? 'bg-white text-journey-brown shadow-sm' : 'text-journey-brown/40'}`}>{t === 'flight' ? '機票' : t === 'hotel' ? '住宿' : '其他'}</button>))}</div>
+            <div className="flex justify-between items-center"><h3 className="text-2xl font-black text-journey-brown italic">New Pass</h3><button onClick={() => setShowAddModal(false)} className="p-3 bg-journey-cream rounded-full text-journey-brown/30"><X size={20} /></button></div>
+            <div className="flex bg-journey-cream p-2 rounded-3xl gap-2">{(['flight', 'hotel', 'car', 'ticket'] as const).map(t => (<button key={t} onClick={() => setType(t)} className={`flex-1 py-3 rounded-2xl text-[10px] font-black ${type === t ? 'bg-white text-journey-brown shadow-sm' : 'text-journey-brown/40'}`}>{t === 'flight' ? '機票' : '住宿'}</button>))}</div>
             <div className="space-y-5">
               {type === 'flight' ? (
                 <>
