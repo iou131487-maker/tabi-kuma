@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plane, Hotel, Ticket, Plus, X, Send, MapPin, Loader2, Calendar, Car, Tag, QrCode } from 'lucide-react';
+import { Plane, Hotel, Ticket, Plus, X, Send, MapPin, Loader2, Calendar, Car, Tag, QrCode, Trash2 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
 const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
@@ -14,30 +14,41 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [bookingTime, setBookingTime] = useState('');
   const [details, setDetails] = useState<any>({ from: '', to: '', flightNo: '', address: '', note: '' });
 
-  // 永遠使用永久 ID
+  // 確保使用穩定 ID
   const tripId = tripConfig.id || 'default-trip';
 
   const fetchBookings = async () => {
     setLoading(true);
+    
+    // 1. 優先從本地讀取（最快且最穩定的來源）
     const saved = localStorage.getItem(`bookings_${tripId}`);
-    let localData = saved ? JSON.parse(saved) : [];
+    const localData = saved ? JSON.parse(saved) : [];
     setBookings(localData);
 
+    // 2. 異步嘗試從雲端同步
     if (supabase && isSupabaseConfigured) {
       try {
-        const { data } = await supabase.from('bookings').select('*').eq('trip_id', tripId).order('created_at', { ascending: false });
-        if (data && data.length > 0) {
+        const { data, error } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('trip_id', tripId)
+          .order('created_at', { ascending: false });
+          
+        // 重要：只有雲端有資料時才覆蓋，避免空雲端沖掉本地資料
+        if (!error && data && data.length > 0) {
           setBookings(data);
           localStorage.setItem(`bookings_${tripId}`, JSON.stringify(data));
         }
       } catch (e) { 
-        console.warn("Supabase Fetch Failed, using local cache"); 
+        console.warn("Supabase Sync Failed"); 
       }
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchBookings(); }, [tripId]);
+  useEffect(() => { 
+    fetchBookings(); 
+  }, [tripId]);
 
   const handleSave = async () => {
     const finalTitle = type === 'flight' ? `${details.from} → ${details.to}` : title;
@@ -51,12 +62,16 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       created_at: new Date().toISOString()
     };
 
+    // 先更新本地 UI 和 LocalStorage (確保不遺失)
     const updated = [payload, ...bookings];
     setBookings(updated);
     localStorage.setItem(`bookings_${tripId}`, JSON.stringify(updated));
 
+    // 非同步同步到雲端
     if (supabase && isSupabaseConfigured) {
-      supabase.from('bookings').insert([payload]).then();
+      supabase.from('bookings').insert([payload]).then(({ error }) => {
+        if (error) console.error("Cloud Sync failed, but data is saved locally.");
+      });
     }
 
     setShowAddModal(false);
@@ -82,9 +97,8 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       return (
         <div key={item.id} className="relative group animate-in fade-in slide-in-from-bottom-4">
           <div className="bg-white rounded-[2.5rem] shadow-soft overflow-hidden flex flex-col sm:flex-row border-2 border-journey-sand/20">
-            {/* 登機證主體 */}
             <div className="flex-grow p-8 relative">
-              <button onClick={() => handleDelete(item.id)} className="absolute top-4 right-4 p-2 text-journey-brown/10 hover:text-journey-red opacity-0 group-hover:opacity-100 transition-all"><X size={16}/></button>
+              <button onClick={() => handleDelete(item.id)} className="absolute top-4 right-4 p-2 text-journey-brown/10 hover:text-journey-red opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16}/></button>
               
               <div className="flex justify-between items-start mb-8">
                 <div className="flex items-center gap-4">
@@ -131,12 +145,10 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
                 </div>
               </div>
 
-              {/* 打孔視覺效果 */}
               <div className="hidden sm:block absolute right-[-14px] top-[-14px] w-7 h-7 bg-journey-cream rounded-full z-10 shadow-inner"></div>
               <div className="hidden sm:block absolute right-[-14px] bottom-[-14px] w-7 h-7 bg-journey-cream rounded-full z-10 shadow-inner"></div>
             </div>
 
-            {/* 存根聯 (Stub) */}
             <div className="w-full sm:w-40 bg-journey-blue/5 p-8 flex flex-col items-center justify-center gap-4 border-t-4 sm:border-t-0 sm:border-l-4 border-dashed border-journey-cream">
                <div className="p-3 bg-white rounded-2xl shadow-soft-sm border-2 border-journey-sand/10">
                  <QrCode size={64} className="text-journey-brown/40" />
@@ -163,7 +175,7 @@ const BookingsView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
           </div>
         </div>
         <div className="flex items-center gap-4">
-           <button onClick={() => handleDelete(item.id)} className="p-2 text-journey-brown/10 hover:text-journey-red opacity-0 group-hover:opacity-100 transition-all"><X size={20}/></button>
+           <button onClick={() => handleDelete(item.id)} className="p-2 text-journey-brown/10 hover:text-journey-red opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={20}/></button>
            <div className="p-3 bg-journey-cream rounded-2xl"><QrCode size={24} className="text-journey-brown/10" /></div>
         </div>
       </div>
