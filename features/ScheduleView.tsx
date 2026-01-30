@@ -20,17 +20,20 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [newNote, setNewNote] = useState('');
 
   const days = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
-  
   const tripId = tripConfig.id || 'default-trip';
 
   const fetchSchedule = async () => {
     setLoading(true);
     
-    // 優先讀取本地快取
+    // 1. 先從本地快取讀取（快速載入）
     const saved = localStorage.getItem(`schedule_${tripId}_day_${selectedDay}`);
-    let localData = saved ? JSON.parse(saved) : [];
-    setScheduleData(localData);
+    if (saved) {
+      setScheduleData(JSON.parse(saved));
+    } else {
+      setScheduleData([]);
+    }
 
+    // 2. 異步同步雲端（正確做法：只要連線成功，就以雲端為準）
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase
@@ -40,13 +43,14 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
           .eq('day_index', selectedDay)
           .order('time', { ascending: true });
 
-        // 僅在雲端有資料時覆蓋
-        if (!error && data && data.length > 0) {
-          setScheduleData(data);
-          localStorage.setItem(`schedule_${tripId}_day_${selectedDay}`, JSON.stringify(data));
+        if (!error) {
+          // 關鍵修復：即使 data 是空的 []，也應該更新並儲存，否則新加入的設備會一直看到舊資料
+          const finalData = data || [];
+          setScheduleData(finalData);
+          localStorage.setItem(`schedule_${tripId}_day_${selectedDay}`, JSON.stringify(finalData));
         }
       } catch (e) {
-        console.warn("Cloud fetch failed");
+        console.warn("Cloud fetch error, sticking with local cache.");
       }
     }
     
