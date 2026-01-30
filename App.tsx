@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
 import { initSupabaseAuth, isSupabaseConfigured } from './supabase'; 
-import { WifiOff, AlertCircle, Sparkles, Cloud, CheckCircle2, XCircle, Settings2, Save, X, Plane, Heart, Camera } from 'lucide-react';
+import { WifiOff, AlertCircle, Cloud, CheckCircle2, XCircle, Settings2, Save, X, Plane, Camera } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -12,9 +12,8 @@ import PlanningView from './features/PlanningView';
 import MembersView from './features/MembersView';
 
 const DEFAULT_CONFIG = {
-  title: "我的行程手帳",
-  dateRange: "2024-05-12",
-  loadingQuotes: "正在把夢想塞進背包...\n別忘了帶防曬喔！",
+  title: "我的夢幻行程",
+  dateRange: "2025-01-01",
   userAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=traveler"
 };
 
@@ -32,11 +31,11 @@ const Header = ({ isLive, isError, tripConfig, onOpenSettings }: { isLive: boole
                 <div className="bg-journey-red text-white p-1 rounded-full animate-pulse"><AlertCircle size={10} /></div>
               ) : !isLive ? (
                 <div className="bg-white/70 backdrop-blur-md text-journey-red px-1.5 py-0.5 rounded-full border border-journey-red/20 flex items-center gap-1">
-                  <WifiOff size={8} /><span className="text-[7px] font-black uppercase">Demo</span>
+                  <WifiOff size={8} /><span className="text-[7px] font-black uppercase tracking-tighter">Demo</span>
                 </div>
               ) : (
                 <div className="bg-white/70 backdrop-blur-md text-journey-darkGreen px-1.5 py-0.5 rounded-full border border-journey-green/20 flex items-center gap-1">
-                  <Cloud size={8} className="animate-pulse" /><span className="text-[7px] font-black uppercase">Live</span>
+                  <Cloud size={8} className="animate-pulse" /><span className="text-[7px] font-black uppercase tracking-tighter">Live</span>
                 </div>
               )}
             </button>
@@ -91,15 +90,15 @@ const Navigation = () => {
   const location = useLocation();
   const currentPath = location.pathname.split('/')[1] || 'schedule';
   return (
-    <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-[280px] bg-white/80 backdrop-blur-2xl px-4 py-3 z-50 rounded-[2.5rem] shadow-2xl border border-white/20">
+    <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[220px] bg-white/80 backdrop-blur-2xl px-2 py-3 z-50 rounded-[2.5rem] shadow-2xl border border-white/20">
       <div className="flex justify-around items-center">
         {NAV_ITEMS.map((item) => (
           <button 
             key={item.id} 
             onClick={() => navigate(`/${item.id}`)} 
-            className={`flex flex-col items-center transition-all duration-300 ${currentPath === item.id ? 'scale-110' : 'opacity-30 grayscale'}`}
+            className={`flex flex-col items-center transition-all duration-300 ${currentPath === item.id ? 'scale-110' : 'opacity-20 grayscale hover:opacity-40'}`}
           >
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all duration-500 ${currentPath === item.id ? 'bg-journey-green text-white shadow-lg' : 'bg-transparent text-journey-brown'}`}>
+            <div className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all duration-500 ${currentPath === item.id ? 'bg-journey-green text-white shadow-lg' : 'bg-transparent text-journey-brown'}`}>
               {item.icon}
             </div>
           </button>
