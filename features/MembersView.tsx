@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { UserPlus, Loader2, X, Send, Trash2, Camera, Edit2 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
-const MembersView: React.FC = () => {
+const MembersView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [members, setMembers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -12,7 +12,7 @@ const MembersView: React.FC = () => {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
 
-  const tripId = 'hokkaido-2024';
+  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
 
   const fetchMembers = async () => {
     setLoading(true);
@@ -32,7 +32,7 @@ const MembersView: React.FC = () => {
     setLoading(false);
   };
 
-  useEffect(() => { fetchMembers(); }, []);
+  useEffect(() => { fetchMembers(); }, [tripId]);
 
   const handleSave = async () => {
     if (!name) return;
