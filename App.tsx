@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
 import { initSupabaseAuth, isSupabaseConfigured } from './supabase'; 
-import { WifiOff, AlertCircle, Cloud, CheckCircle2, XCircle, Settings2, Save, X, Plane, Camera, Copy, Link, RefreshCcw, Share2, Smartphone } from 'lucide-react';
+import { WifiOff, AlertCircle, Cloud, CheckCircle2, XCircle, Settings2, Save, X, Plane, Camera, Copy, Link, RefreshCcw, Share2, Smartphone, CloudRain } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -26,25 +26,23 @@ const Header = ({ isLive, isError, tripConfig, onOpenSettings }: { isLive: boole
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-2xl font-black text-journey-brown tracking-tight">{tripConfig.title}</h1>
           <div className="flex items-center gap-1.5">
-            {/* 顯著的設定按鈕 */}
             <button 
               onClick={onOpenSettings} 
               className="w-9 h-9 bg-white/80 backdrop-blur-md rounded-xl shadow-soft-sm border-2 border-white flex items-center justify-center text-journey-brown hover:bg-journey-accent hover:text-white transition-all active:scale-90 group"
-              title="同步與設定"
             >
               <Settings2 size={20} className="group-hover:rotate-90 transition-transform duration-500" />
             </button>
             
             <button onClick={() => setShowConfigHelper(!showConfigHelper)} className="flex items-center">
               {isError ? (
-                <div className="bg-journey-red text-white p-1 rounded-full animate-pulse"><AlertCircle size={10} /></div>
+                <div className="bg-journey-red text-white px-2 py-0.5 rounded-full flex items-center gap-1"><AlertCircle size={10} /><span className="text-[7px] font-black uppercase">Error</span></div>
               ) : !isLive ? (
-                <div className="bg-white/70 backdrop-blur-md text-journey-red px-1.5 py-0.5 rounded-full border border-journey-red/20 flex items-center gap-1">
-                  <WifiOff size={8} /><span className="text-[7px] font-black uppercase tracking-tighter">Demo</span>
+                <div className="bg-journey-sand text-journey-brown/40 px-2 py-0.5 rounded-full border border-journey-brown/10 flex items-center gap-1">
+                  <WifiOff size={8} /><span className="text-[7px] font-black uppercase tracking-tighter">Offline (Demo)</span>
                 </div>
               ) : (
-                <div className="bg-white/70 backdrop-blur-md text-journey-darkGreen px-1.5 py-0.5 rounded-full border border-journey-green/20 flex items-center gap-1">
-                  <Cloud size={8} className="animate-pulse" /><span className="text-[7px] font-black uppercase tracking-tighter">Live</span>
+                <div className="bg-journey-green text-journey-darkGreen px-2 py-0.5 rounded-full border border-journey-darkGreen/20 flex items-center gap-1 shadow-sm">
+                  <Cloud size={8} className="animate-pulse" /><span className="text-[7px] font-black uppercase tracking-tighter">Synced (Live)</span>
                 </div>
               )}
             </button>
@@ -53,7 +51,7 @@ const Header = ({ isLive, isError, tripConfig, onOpenSettings }: { isLive: boole
         <div className="flex items-center gap-2">
           <p className="text-journey-brown/40 text-[10px] font-bold uppercase tracking-[0.2em]">{tripConfig.dateRange}</p>
           <div className="w-1 h-1 rounded-full bg-journey-brown/20"></div>
-          <button onClick={onOpenSettings} className="text-[9px] font-black text-journey-blue uppercase hover:underline">點此同步手機</button>
+          <button onClick={onOpenSettings} className="text-[9px] font-black text-journey-blue uppercase hover:underline">同步設定</button>
         </div>
       </div>
       
@@ -63,17 +61,24 @@ const Header = ({ isLive, isError, tripConfig, onOpenSettings }: { isLive: boole
       </button>
 
       {showConfigHelper && (
-        <div className="absolute top-24 left-6 right-6 bg-white rounded-[2.5rem] shadow-2xl z-[60] border-4 border-journey-sand p-6 animate-in zoom-in-95 duration-200">
-           <div className="flex justify-between items-center mb-4"><h4 className="text-sm font-black text-journey-brown">連線狀態</h4><button onClick={() => setShowConfigHelper(false)} className="text-journey-brown/20"><X size={16}/></button></div>
-           <div className="space-y-3">
-             <div className="flex items-center justify-between p-4 bg-journey-cream rounded-2xl">
-               <div className="flex flex-col">
-                 <span className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest">行程 ID</span>
-                 <span className="text-xs font-black text-journey-brown font-mono">{tripConfig.id}</span>
-               </div>
-               <button onClick={() => { navigator.clipboard.writeText(tripConfig.id); alert('代碼已複製！'); }} className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center text-journey-blue active:scale-90"><Copy size={16} /></button>
+        <div className="absolute top-24 left-6 right-6 bg-white rounded-[2.5rem] shadow-2xl z-[60] border-4 border-journey-sand p-8 animate-in zoom-in-95 duration-200">
+           <div className="flex justify-between items-center mb-6"><h4 className="text-sm font-black text-journey-brown">連線狀態說明</h4><button onClick={() => setShowConfigHelper(false)} className="text-journey-brown/20"><X size={16}/></button></div>
+           <div className="space-y-4">
+             <div className={`p-4 rounded-2xl border-2 ${isLive ? 'bg-journey-green/10 border-journey-green/20' : 'bg-journey-red/10 border-journey-red/20'}`}>
+               <p className="text-xs font-black text-journey-brown mb-1">{isLive ? '✅ 已連網' : '❌ 未連網 (Demo)'}</p>
+               <p className="text-[10px] text-journey-brown/60 leading-relaxed">
+                 {isLive 
+                   ? '你的所有修改都會即時同步到雲端，隊友輸入邀請碼後即可看到你的資料。' 
+                   : '目前僅儲存在這台設備。請檢查 Supabase 設定以啟用雲端同步功能，否則手機無法抓到這台電腦的資料。'}
+               </p>
              </div>
-             <div className="flex items-center justify-between p-4 bg-journey-cream rounded-2xl"><span className="text-xs font-bold text-journey-brown/60">雲端同步</span>{isSupabaseConfigured ? <CheckCircle2 className="text-journey-green" size={18} /> : <XCircle className="text-journey-red" size={18} />}</div>
+             <div className="p-4 bg-journey-cream rounded-2xl">
+               <span className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest">目前行程 ID</span>
+               <div className="flex items-center justify-between mt-1">
+                 <span className="text-xs font-black text-journey-brown font-mono">{tripConfig.id}</span>
+                 <button onClick={() => { navigator.clipboard.writeText(tripConfig.id); alert('代碼已複製！'); }} className="text-journey-blue"><Copy size={16} /></button>
+               </div>
+             </div>
            </div>
         </div>
       )}
@@ -97,12 +102,15 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
   }, [isOpen, config]);
 
   const handleJoin = () => {
-    if (!joinId.trim().startsWith('trip-')) return alert('請輸入正確的行程代碼喔！格式為 trip-xxxx');
+    const cleanId = joinId.trim();
+    if (!cleanId.startsWith('trip-')) return alert('格式不正確！請輸入包含 trip- 開頭的完整代碼。');
+    
     if (confirm('確定要切換到此行程嗎？\n\n這會將你目前的手機資料替換成對方的行程資料喔！')) {
-      const newConfig = { ...DEFAULT_CONFIG, id: joinId.trim() };
-      onSave(newConfig);
-      // 給予一點延遲確保 LocalStorage 寫入
-      setTimeout(() => window.location.reload(), 300);
+      const newConfig = { ...DEFAULT_CONFIG, id: cleanId };
+      // 關鍵修復：先確保寫入 LocalStorage 再重新整理
+      localStorage.setItem('trip_config', JSON.stringify(newConfig));
+      alert('同步成功！正在為您重新載入資料...');
+      window.location.reload();
     }
   };
 
@@ -112,47 +120,38 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
     <div className="fixed inset-0 z-[120] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in duration-300">
       <div className="bg-white w-full max-w-sm rounded-t-[4rem] sm:rounded-[3.5rem] p-10 shadow-2xl space-y-8 animate-in slide-in-from-bottom-10 duration-500 max-h-[90vh] overflow-y-auto hide-scrollbar">
         <div className="flex justify-between items-center">
-          <div>
-            <h3 className="text-2xl font-black text-journey-brown tracking-tighter uppercase italic flex items-center gap-2">Settings <Settings2 size={20} className="text-journey-accent" /></h3>
-            <p className="text-[10px] font-bold text-journey-brown/30 uppercase tracking-[0.2em] mt-1">Personalize your journey</p>
-          </div>
-          <button onClick={onClose} className="p-3 bg-journey-cream rounded-full text-journey-brown/30 active:scale-90 transition-all"><X size={20} /></button>
+          <h3 className="text-2xl font-black text-journey-brown italic flex items-center gap-2">Settings <Settings2 size={20} className="text-journey-accent" /></h3>
+          <button onClick={onClose} className="p-3 bg-journey-cream rounded-full text-journey-brown/30"><X size={20} /></button>
         </div>
 
-        {/* 核心同步區塊 - 更加明顯 */}
-        <div className="p-6 bg-gradient-to-br from-journey-blue to-white rounded-[2.5rem] border-4 border-journey-blue/20 shadow-soft-sm space-y-4">
+        <div className="p-6 bg-gradient-to-br from-journey-blue/20 to-white rounded-[2.5rem] border-4 border-journey-blue/20 space-y-4 shadow-inner">
            <div className="flex items-center gap-3">
              <div className="w-10 h-10 bg-white rounded-2xl flex items-center justify-center text-journey-blue shadow-sm"><Smartphone size={20} /></div>
-             <div>
-               <h4 className="text-sm font-black text-journey-brown">跨設備同步</h4>
-               <p className="text-[9px] font-bold text-journey-brown/40 uppercase tracking-tighter">Sync with other devices</p>
-             </div>
+             <h4 className="text-sm font-black text-journey-brown">跨設備同步</h4>
            </div>
 
-           <div className="space-y-2">
-             <p className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-1">你的專屬代碼</p>
+           <div className="space-y-1">
+             <p className="text-[10px] font-black text-journey-brown/30 uppercase tracking-widest ml-1">你的專屬邀請碼</p>
              <div className="flex gap-2">
-               <div className="flex-grow bg-white/60 p-4 rounded-2xl font-mono text-xs font-black text-journey-brown border border-white truncate">{config.id}</div>
-               <button onClick={() => { navigator.clipboard.writeText(config.id); alert('代碼已複製！快傳給電腦或隊友吧 ✨'); }} className="px-4 bg-journey-blue text-white rounded-2xl shadow-sm active:scale-90 transition-transform"><Copy size={16} /></button>
+               <div className="flex-grow bg-white p-4 rounded-2xl font-mono text-xs font-black text-journey-brown border border-journey-blue/10 truncate">{config.id}</div>
+               <button onClick={() => { navigator.clipboard.writeText(config.id); alert('代碼已複製！'); }} className="px-4 bg-journey-blue text-white rounded-2xl shadow-sm"><Copy size={16} /></button>
              </div>
            </div>
 
-           <div className="pt-2">
-             <button onClick={() => setShowJoinField(!showJoinField)} className="w-full py-3 border-2 border-dashed border-journey-blue/30 rounded-2xl text-[10px] font-black text-journey-blue hover:bg-white/40 transition-all">
-               {showJoinField ? '關閉輸入' : '輸入別人的代碼以同步...'}
-             </button>
-             {showJoinField && (
-               <div className="flex gap-2 mt-3 animate-in slide-in-from-top-4">
-                 <input placeholder="trip-xxxx..." value={joinId} onChange={e => setJoinId(e.target.value)} className="flex-grow bg-white p-4 rounded-2xl text-xs font-black focus:outline-none ring-2 ring-journey-blue/20" />
-                 <button onClick={handleJoin} className="px-5 bg-journey-darkGreen text-white rounded-2xl shadow-lg active:scale-90"><RefreshCcw size={16} /></button>
-               </div>
-             )}
-           </div>
+           <button onClick={() => setShowJoinField(!showJoinField)} className="w-full py-3 border-2 border-dashed border-journey-blue/30 rounded-2xl text-[10px] font-black text-journey-blue">
+             {showJoinField ? '關閉輸入' : '輸入隊友代碼以加入行程...'}
+           </button>
+           
+           {showJoinField && (
+             <div className="flex gap-2 mt-2 animate-in slide-in-from-top-4">
+               <input placeholder="trip-xxxx..." value={joinId} onChange={e => setJoinId(e.target.value)} className="flex-grow bg-white p-4 rounded-2xl text-xs font-black focus:outline-none ring-2 ring-journey-blue/20" />
+               <button onClick={handleJoin} className="px-5 bg-journey-darkGreen text-white rounded-2xl shadow-lg"><RefreshCcw size={16} /></button>
+             </div>
+           )}
         </div>
 
         <div className="space-y-6">
           <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-4">行程名稱</label><input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none ring-journey-green focus:ring-4 transition-all" /></div>
-          <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-4">出發日期</label><input type="date" value={dateRange} onChange={(e) => setDateRange(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none" /></div>
           <div className="space-y-2"><label className="text-[10px] font-black text-journey-brown/40 uppercase tracking-widest ml-4">個人頭像網址</label><input type="text" value={userAvatar} onChange={(e) => setUserAvatar(e.target.value)} className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none" /></div>
         </div>
 
@@ -195,15 +194,8 @@ const AppContent = () => {
   const [tripConfig, setTripConfig] = useState(() => {
     try {
       const saved = localStorage.getItem('trip_config');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (!parsed.id) {
-          parsed.id = `trip-${Date.now()}`;
-          localStorage.setItem('trip_config', JSON.stringify(parsed));
-        }
-        return parsed;
-      }
-    } catch (e) { console.error("Config load error", e); }
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
     const newConfig = { ...DEFAULT_CONFIG, id: `trip-${Date.now()}` };
     localStorage.setItem('trip_config', JSON.stringify(newConfig));
     return newConfig;
