@@ -1,174 +1,123 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { CATEGORY_ICONS, THEME_COLORS } from '../constants';
-import { Clock, MapPin, Sparkles, Loader2, Plus, Send, X, Calendar as CalendarIcon, Save, Trash2, Compass } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { Plus, X, Trash2, Compass, Save, Loader2, Edit3, Map } from 'lucide-react';
+import { supabase } from '../supabase';
 
 const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
-  const [selectedDay, setSelectedDay] = useState(() => {
-    return Number(localStorage.getItem(`last_selected_day_${tripConfig.id}`)) || 0;
-  });
-  const [scheduleData, setScheduleData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [editingItem, setEditingItem] = useState<any | null>(null);
-
-  const [newLocation, setNewLocation] = useState('');
-  const [newTime, setNewTime] = useState('12:00');
-  const [newCategory, setNewCategory] = useState('attraction');
-  const [newNote, setNewNote] = useState('');
-
-  const days = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
   const tripId = tripConfig.id;
+  const [selectedDay, setSelectedDay] = useState(() => Number(localStorage.getItem(`last_day_${tripId}`)) || 0);
+  const [items, setItems] = useState<any[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editingItem, setEditingItem] = useState<any | null>(null);
+  const [form, setForm] = useState({ title: '', time: '12:00', category: 'attraction' });
 
-  const fetchSchedule = useCallback(async () => {
-    if (!tripId) return;
-    setLoading(true);
+  // 僅在切換天數時從雲端拉取一次，避免頻繁同步導致刪除回溯
+  useEffect(() => {
+    const saved = localStorage.getItem(`sched_${tripId}_${selectedDay}`);
+    if (saved) setItems(JSON.parse(saved));
+    localStorage.setItem(`last_day_${tripId}`, selectedDay.toString());
     
-    // 1. 優先從本地讀取 (F5 瞬間顯示)
-    const localKey = `schedule_${tripId}_day_${selectedDay}`;
-    const saved = localStorage.getItem(localKey);
-    if (saved) setScheduleData(JSON.parse(saved));
-
-    // 2. 雲端同步
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('schedules')
-          .select('*')
-          .eq('trip_id', tripId)
-          .eq('day_index', selectedDay)
-          .order('time', { ascending: true });
-
-        if (!error && data) {
-          setScheduleData(data);
-          localStorage.setItem(localKey, JSON.stringify(data));
-        }
-      } catch (e) {
-        console.error("Cloud Fetch Failed:", e);
+    const fetchSync = async () => {
+      if (!supabase || !tripId) return;
+      setSyncing(true);
+      const { data } = await supabase.from('schedules').select('*').eq('trip_id', tripId).eq('day_index', selectedDay).order('time');
+      if (data && data.length > 0) {
+        setItems(data);
+        localStorage.setItem(`sched_${tripId}_${selectedDay}`, JSON.stringify(data));
       }
-    }
-    setLoading(false);
+      setSyncing(false);
+    };
+    fetchSync();
   }, [selectedDay, tripId]);
 
-  useEffect(() => {
-    fetchSchedule();
-    localStorage.setItem(`last_selected_day_${tripId}`, selectedDay.toString());
-  }, [fetchSchedule, selectedDay, tripId]);
-
-  const handleSaveItem = async () => {
-    if (!newLocation.trim()) return;
+  const handleSave = async () => {
+    if (!form.title) return;
     
     const payload = {
-      id: editingItem?.id || Date.now().toString(),
-      title: newLocation,
-      location: newLocation,
-      time: newTime,
-      category: newCategory,
-      note: newNote,
-      day_index: selectedDay,
-      trip_id: tripId
+      id: editingItem?.id || `sc-${Date.now()}`,
+      ...form, location: form.title, day_index: selectedDay, trip_id: tripId
     };
 
-    // [核心修復] 先 Await 雲端儲存
-    if (isSupabaseConfigured && supabase) {
-      const { error } = editingItem 
-        ? await supabase.from('schedules').update(payload).eq('id', editingItem.id)
-        : await supabase.from('schedules').insert([payload]);
-      
-      if (error) {
-        alert("同步到雲端失敗，請檢查網路！");
-        return;
-      }
-    }
-
-    // 雲端成功後才更新本地
-    const localKey = `schedule_${tripId}_day_${selectedDay}`;
-    const updatedData = editingItem 
-      ? scheduleData.map(d => d.id === editingItem.id ? payload : d)
-      : [...scheduleData, payload].sort((a, b) => a.time.localeCompare(b.time));
+    // 1. 立即更新 UI (樂觀更新)
+    const newItems = editingItem ? items.map(i => i.id === editingItem.id ? payload : i) : [...items, payload];
+    const sorted = newItems.sort((a,b) => a.time.localeCompare(b.time));
+    setItems(sorted);
+    localStorage.setItem(`sched_${tripId}_${selectedDay}`, JSON.stringify(sorted));
     
-    setScheduleData(updatedData);
-    localStorage.setItem(localKey, JSON.stringify(updatedData));
-    resetForm();
+    // 2. 立即關閉視窗 (不等待非同步)
+    setShowForm(false); 
+    setEditingItem(null);
+
+    // 3. 背景同步
+    try {
+      if (supabase) await supabase.from('schedules').upsert(payload);
+    } catch (e) { console.error("Sync failed", e); }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('確定要刪除嗎？')) return;
-    if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.from('schedules').delete().eq('id', id);
-      if (error) return alert("刪除失敗");
-    }
-    const updatedData = scheduleData.filter(d => d.id !== id);
-    setScheduleData(updatedData);
-    localStorage.setItem(`schedule_${tripId}_day_${selectedDay}`, JSON.stringify(updatedData));
-    resetForm();
-  };
-
-  const resetForm = () => {
-    setShowAddForm(false);
-    setEditingItem(null);
-    setNewLocation('');
-    setNewTime('12:00');
-    setNewCategory('attraction');
-    setNewNote('');
+    if (!confirm('確定刪除此行程？')) return;
+    
+    // 1. 立即從 UI 移除
+    const filtered = items.filter(i => i.id !== id);
+    setItems(filtered);
+    localStorage.setItem(`sched_${tripId}_${selectedDay}`, JSON.stringify(filtered));
+    
+    // 2. 背景刪除
+    if (supabase) await supabase.from('schedules').delete().eq('id', id);
   };
 
   return (
     <div className="space-y-6 pb-20">
-      <div className="bg-journey-accent rounded-4xl p-6 shadow-soft flex items-center justify-between overflow-hidden relative border-4 border-white">
-        <div className="relative z-10">
-          <p className="text-[10px] font-black text-journey-brown/40 uppercase tracking-[0.2em]">行程準備中</p>
-          <h2 className="text-4xl font-black text-journey-brown mt-1 tracking-tight italic">Enjoy!</h2>
-        </div>
-      </div>
-
-      <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2 pt-1 -mx-2 px-2">
-        {days.map((day, idx) => (
-          <button key={day} onClick={() => setSelectedDay(idx)} className={`flex-shrink-0 w-16 h-20 rounded-3xl flex flex-col items-center justify-center transition-all ${selectedDay === idx ? 'bg-journey-green text-white shadow-soft transform -translate-y-1' : 'bg-white text-journey-brown/40'}`}>
-            <span className="text-[8px] font-black uppercase tracking-tighter opacity-60">DAY</span>
-            <span className="text-xl font-black leading-none">{idx + 1}</span>
+      <div className="flex gap-3 overflow-x-auto hide-scrollbar py-2">
+        {[0,1,2,3,4,5,6].map(idx => (
+          <button key={idx} onClick={() => setSelectedDay(idx)} className={`flex-shrink-0 w-14 h-16 rounded-2xl flex flex-col items-center justify-center transition-all ${selectedDay === idx ? 'bg-journey-green text-white shadow-lg -translate-y-1' : 'bg-white text-journey-brown/30'}`}>
+            <span className="text-[8px] font-black uppercase">Day</span>
+            <span className="text-lg font-black leading-none">{idx + 1}</span>
           </button>
         ))}
       </div>
 
-      <div className="relative">
-        {loading && scheduleData.length === 0 ? (
-          <div className="flex justify-center py-20 opacity-30"><Loader2 className="animate-spin" /></div>
-        ) : scheduleData.length === 0 ? (
-          <div className="bg-white/40 rounded-4xl p-16 text-center border-4 border-dashed border-journey-sand"><p className="text-journey-brown/40 text-sm font-black">這天還沒有行程 ✨</p></div>
-        ) : (
-          <div className="space-y-5 relative before:absolute before:left-[21px] before:top-4 before:bottom-4 before:w-1 before:bg-journey-sand/50">
-            {scheduleData.map((item) => (
-              <div key={item.id} onClick={() => { setEditingItem(item); setNewLocation(item.location); setNewTime(item.time); setNewCategory(item.category); setNewNote(item.note); setShowAddForm(true); }} className="flex gap-4 animate-in fade-in slide-in-from-bottom-4 group cursor-pointer">
-                <div className={`z-10 w-11 h-11 rounded-2xl flex items-center justify-center shadow-soft-sm shrink-0 border-4 border-white ${THEME_COLORS[item.category as keyof typeof THEME_COLORS] || 'bg-journey-sand'} text-white`}>
-                  {CATEGORY_ICONS[item.category as keyof typeof CATEGORY_ICONS] || <Clock size={16} />}
-                </div>
-                <div className="bg-white rounded-[2rem] p-5 flex-grow shadow-soft border-l-8 border-journey-green">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-black text-journey-brown/40 px-2 py-0.5 rounded-full bg-journey-cream">{item.time}</span>
-                  </div>
-                  <h4 className="font-black text-journey-brown text-lg leading-tight">{item.location}</h4>
-                  {item.note && <p className="text-[10px] text-journey-brown/60 italic mt-2">{item.note}</p>}
-                </div>
+      <div className="space-y-6 relative before:absolute before:left-[21px] before:top-4 before:bottom-4 before:w-1 before:bg-journey-cream">
+        {items.map((item) => (
+          <div key={item.id} className="flex gap-4 relative group animate-in slide-in-from-left-4">
+            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center z-10 border-4 border-white shadow-soft-sm shrink-0 ${THEME_COLORS[item.category as keyof typeof THEME_COLORS] || 'bg-journey-sand'} text-white`}>
+              {CATEGORY_ICONS[item.category as keyof typeof CATEGORY_ICONS]}
+            </div>
+            <div className="bg-white rounded-[2rem] p-5 flex-grow shadow-soft relative">
+              <button onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.title)}`, '_blank')} className="absolute right-4 top-4 p-2 bg-journey-blue/10 text-journey-blue rounded-xl"><Map size={18} /></button>
+              <div className="flex items-center gap-2 mb-1">
+                 <span className="text-[10px] font-black text-journey-brown/40 bg-journey-cream px-2 py-0.5 rounded-full">{item.time}</span>
               </div>
-            ))}
+              <h4 className="font-black text-journey-brown text-lg pr-10">{item.title}</h4>
+              <div className="flex gap-3 mt-4">
+                <button onClick={() => { setEditingItem(item); setForm({ title: item.title, time: item.time, category: item.category }); setShowForm(true); }} className="text-[10px] font-black text-journey-blue uppercase bg-journey-blue/5 px-3 py-1.5 rounded-lg flex items-center gap-1"><Edit3 size={10}/> 編輯</button>
+                <button onClick={() => handleDelete(item.id)} className="text-[10px] font-black text-journey-red uppercase bg-journey-red/5 px-3 py-1.5 rounded-lg flex items-center gap-1"><Trash2 size={10}/> 刪除</button>
+              </div>
+            </div>
           </div>
-        )}
+        ))}
       </div>
 
-      <button onClick={() => setShowAddForm(true)} className="fixed bottom-32 right-6 w-16 h-16 bg-journey-green text-white rounded-full shadow-lg flex items-center justify-center active:scale-90 z-40 border-4 border-white"><Plus size={32} strokeWidth={4} /></button>
+      <button onClick={() => { setEditingItem(null); setForm({ title: '', time: '09:00', category: 'attraction' }); setShowForm(true); }} className="fixed bottom-32 right-6 w-16 h-16 bg-journey-green text-white rounded-full shadow-2xl flex items-center justify-center z-40 border-4 border-white active:scale-90 transition-transform"><Plus size={32} /></button>
 
-      {showAddForm && (
-        <div className="fixed inset-0 z-[100] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
-          <div className="bg-white w-full max-w-sm rounded-t-[3.5rem] sm:rounded-[3rem] p-8 shadow-2xl space-y-6 overflow-y-auto max-h-[90vh]">
-            <div className="flex justify-between items-center"><h3 className="text-xl font-black text-journey-brown">{editingItem ? '編輯行程' : '新增行程'}</h3><div className="flex gap-2">{editingItem && <button onClick={() => handleDelete(editingItem.id)} className="p-3 bg-journey-red/10 text-journey-red rounded-full"><Trash2 size={20} /></button>}<button onClick={resetForm} className="p-3 bg-journey-cream rounded-full text-journey-brown/30"><X size={20} /></button></div></div>
-            <div className="space-y-5">
-              <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="要去哪裡呢？" className="w-full bg-journey-cream rounded-3xl p-5 text-journey-brown font-black focus:outline-none" />
-              <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} className="w-full bg-journey-cream rounded-2xl p-4 text-journey-brown font-black focus:outline-none" />
-              <textarea value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="備註..." className="w-full bg-journey-cream rounded-3xl p-5 text-sm text-journey-brown font-bold min-h-[100px] resize-none" />
+      {showForm && (
+        <div className="fixed inset-0 z-[200] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-t-[4rem] sm:rounded-[3rem] p-10 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-black text-journey-brown italic">{editingItem ? '修改' : '新增'}行程</h3>
+            <div className="space-y-4">
+              <input placeholder="地點" value={form.title} onChange={e => setForm({...form, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-3xl font-black focus:outline-none" />
+              <input type="time" value={form.time} onChange={e => setForm({...form, time: e.target.value})} className="w-full bg-journey-cream p-5 rounded-3xl font-black focus:outline-none" />
+              <div className="flex gap-2 overflow-x-auto p-1 hide-scrollbar">
+                {Object.keys(CATEGORY_ICONS).map(cat => (
+                  <button key={cat} onClick={() => setForm({...form, category: cat})} className={`p-4 rounded-2xl shrink-0 transition-all ${form.category === cat ? (THEME_COLORS[cat as keyof typeof THEME_COLORS] || 'bg-journey-sand') + ' text-white scale-110 shadow-md' : 'bg-journey-cream text-journey-brown/20'}`}>{CATEGORY_ICONS[cat as keyof typeof CATEGORY_ICONS]}</button>
+                ))}
+              </div>
             </div>
-            <button onClick={handleSaveItem} className="w-full bg-journey-darkGreen text-white font-black py-5 rounded-[2.5rem] shadow-lg flex items-center justify-center gap-2 active:scale-95 border-b-4 border-black/10 transition-all">儲存行程</button>
+            <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-6 rounded-[2.5rem] shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
+              <Save size={20} /> 儲存
+            </button>
           </div>
         </div>
       )}
