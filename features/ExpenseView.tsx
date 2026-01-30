@@ -1,134 +1,144 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Loader2, Utensils, Plane, Hotel, MapPin, Tag, Trash2, Edit2 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { Plus, X, Loader2, Trash2, Edit2, Users, Save, DollarSign, Calculator, RefreshCw } from 'lucide-react';
+import { supabase } from '../supabase';
+
+const CAT_STYLES = {
+  衣: 'bg-[#FF9AA2] text-white',
+  食: 'bg-[#FFDAC1] text-journey-brown',
+  行: 'bg-[#B5EAD7] text-journey-brown',
+  住: 'bg-[#C7CEEA] text-journey-brown',
+  玩: 'bg-[#FFB7B2] text-white',
+  雜: 'bg-[#E2F0CB] text-journey-brown'
+};
 
 const ExpenseView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
+  const tripId = tripConfig.id;
+  const RATE = 0.0515;
+
   const [expenses, setExpenses] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  
-  const [title, setTitle] = useState('');
-  const [amount, setAmount] = useState('');
-  const [currency, setCurrency] = useState<'JPY' | 'HKD'>('JPY');
-  const [payer, setPayer] = useState('');
+  const [editingItem, setEditingItem] = useState<any | null>(null);
+  const [form, setForm] = useState({ title: '', amount: '', currency: 'JPY', payer: '我', category: '食', splitCount: 1 });
 
-  const tripId = tripConfig.id;
-  const JPY_TO_HKD = 0.0518;
-
-  const fetchData = useCallback(async () => {
-    if (!tripId) return;
-    setLoading(true);
-    
-    // 1. 本地優先
-    const exKey = `expenses_${tripId}`;
-    const memKey = `members_${tripId}`;
-    const savedEx = localStorage.getItem(exKey);
-    const savedMem = localStorage.getItem(memKey);
-    if (savedEx) setExpenses(JSON.parse(savedEx));
+  useEffect(() => {
+    const savedExp = localStorage.getItem(`exp_${tripId}`);
+    const savedMem = localStorage.getItem(`mem_${tripId}`);
+    if (savedExp) setExpenses(JSON.parse(savedExp));
     if (savedMem) setMembers(JSON.parse(savedMem));
 
-    // 2. 雲端同步
-    if (supabase && isSupabaseConfigured) {
-      try {
-        const { data: memData } = await supabase.from('members').select('*').eq('trip_id', tripId);
-        if (memData && memData.length > 0) {
-          setMembers(memData);
-          localStorage.setItem(memKey, JSON.stringify(memData));
-        }
-
-        const { data: exData } = await supabase.from('expenses').select('*').eq('trip_id', tripId).order('created_at', { ascending: false });
-        if (exData) {
-          setExpenses(exData);
-          localStorage.setItem(exKey, JSON.stringify(exData));
-        }
-      } catch (e) { console.error("Sync Error"); }
-    }
-    setLoading(false);
+    const fetchSync = async () => {
+      if (!supabase || !tripId) return;
+      setSyncing(true);
+      const { data: m } = await supabase.from('members').select('*').eq('trip_id', tripId);
+      if (m && m.length > 0) {
+        setMembers(m);
+        localStorage.setItem(`mem_${tripId}`, JSON.stringify(m));
+      }
+      const { data: e } = await supabase.from('expenses').select('*').eq('trip_id', tripId).order('created_at', { ascending: false });
+      if (e && e.length > 0) {
+        setExpenses(e);
+        localStorage.setItem(`exp_${tripId}`, JSON.stringify(e));
+      }
+      setSyncing(false);
+    };
+    fetchSync();
   }, [tripId]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
-
   const handleSave = async () => {
-    if (!title || !amount) return;
-    const payload = { 
-      id: Date.now().toString(),
-      title, amount: Number(amount), currency, payer: payer || '我', 
-      trip_id: tripId,
-      created_at: new Date().toISOString()
+    if (!form.title || !form.amount) return;
+    
+    const payload = {
+      id: editingItem?.id || `ex-${Date.now()}`,
+      ...form, amount: Number(form.amount), split_count: Number(form.splitCount) || 1,
+      trip_id: tripId, created_at: editingItem?.created_at || new Date().toISOString()
     };
     
-    // [鎖定寫入]
-    if (supabase && isSupabaseConfigured) {
-      const { error } = await supabase.from('expenses').insert([payload]);
-      if (error) return alert("儲存失敗");
-    }
-
-    const updated = [payload, ...expenses];
+    // 立即更新與關閉
+    const updated = editingItem ? expenses.map(e => e.id === editingItem.id ? payload : e) : [payload, ...expenses];
     setExpenses(updated);
-    localStorage.setItem(`expenses_${tripId}`, JSON.stringify(updated));
+    localStorage.setItem(`exp_${tripId}`, JSON.stringify(updated));
     setShowForm(false);
-    setTitle(''); setAmount('');
+    setEditingItem(null);
+
+    // 背景同步
+    try {
+      if (supabase) await supabase.from('expenses').upsert(payload);
+    } catch (e) { console.error(e); }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('確定刪除嗎？')) return;
-    if (supabase && isSupabaseConfigured) {
-      await supabase.from('expenses').delete().eq('id', id);
-    }
-    const updated = expenses.filter(e => e.id !== id);
-    setExpenses(updated);
-    localStorage.setItem(`expenses_${tripId}`, JSON.stringify(updated));
+    if (!confirm('確定刪除？')) return;
+    const filtered = expenses.filter(e => e.id !== id);
+    setExpenses(filtered);
+    localStorage.setItem(`exp_${tripId}`, JSON.stringify(filtered));
+    if (supabase) await supabase.from('expenses').delete().eq('id', id);
   };
 
-  const totalHKD = Math.round(expenses.reduce((sum, item) => sum + (item.currency === 'HKD' ? item.amount : item.amount * JPY_TO_HKD), 0));
+  const totalHKD = Math.round(expenses.reduce((s, i) => s + (i.currency === 'HKD' ? i.amount : i.amount * RATE), 0));
 
   return (
     <div className="space-y-6 pb-24">
-      <div className="bg-journey-green rounded-[3rem] p-8 text-journey-brown shadow-soft border-4 border-white animate-in zoom-in-95">
-        <p className="text-[10px] font-black opacity-40 uppercase tracking-widest">Total Spent (HKD)</p>
-        <h2 className="text-4xl font-black italic">$ {totalHKD.toLocaleString()}</h2>
+      <div className="bg-journey-green rounded-[3rem] p-8 text-journey-brown shadow-soft border-4 border-white relative overflow-hidden">
+        <div className="flex flex-col gap-1 relative z-10">
+          <div className="flex justify-between items-center">
+             <p className="text-[10px] font-black opacity-50 uppercase tracking-widest">總支出 (HKD)</p>
+             {syncing && <RefreshCw size={14} className="animate-spin opacity-30"/>}
+          </div>
+          <h2 className="text-5xl font-black italic tracking-tighter leading-none">$ {totalHKD.toLocaleString()}</h2>
+        </div>
       </div>
-
-      <button onClick={() => setShowForm(true)} className="w-full bg-white rounded-4xl p-6 shadow-soft flex items-center justify-between border-4 border-white active:scale-95 transition-all">
-         <div className="flex items-center gap-4">
-           <div className="w-12 h-12 rounded-xl bg-journey-green text-white flex items-center justify-center"><Plus /></div>
-           <span className="font-black text-journey-brown">新增支出紀錄</span>
-         </div>
-      </button>
 
       <div className="space-y-4">
-        {expenses.map((ex) => (
-          <div key={ex.id} className="bg-white rounded-[2rem] p-5 flex items-center justify-between shadow-soft border-2 border-journey-sand/5">
-            <div className="overflow-hidden">
-              <h5 className="font-black text-journey-brown text-base truncate">{ex.title}</h5>
-              <p className="text-[9px] font-black text-journey-green uppercase">{ex.payer}</p>
+        {expenses.map((ex) => {
+          const count = ex.split_count || members.length || 1;
+          const splitVal = (ex.amount / count).toFixed(ex.currency === 'JPY' ? 0 : 1);
+          return (
+            <div key={ex.id} className="bg-white rounded-[2rem] p-5 shadow-soft border-4 border-white flex justify-between items-start animate-in zoom-in-95">
+              <div className="flex-grow pr-10">
+                <div className="flex gap-2 items-center mb-1">
+                  <div className={`px-2 py-0.5 rounded-lg font-black text-[10px] ${CAT_STYLES[ex.category as keyof typeof CAT_STYLES] || 'bg-gray-200'}`}>{ex.category}</div>
+                  <h5 className="font-black text-journey-brown">{ex.title}</h5>
+                </div>
+                <p className="font-black text-journey-brown text-2xl">{ex.currency === 'JPY' ? '¥' : '$'}{ex.amount.toLocaleString()}</p>
+                <div className="mt-2 text-[10px] font-black text-journey-brown/40 bg-journey-cream px-2 py-1 rounded-lg inline-block">
+                  {ex.payer} 付款 • {count} 人平分 ({ex.currency === 'JPY' ? '¥' : '$'}{splitVal})
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button onClick={() => { setEditingItem(ex); setForm({ ...ex, amount: ex.amount.toString(), splitCount: ex.split_count || members.length }); setShowForm(true); }} className="p-2 text-journey-blue"><Edit2 size={16}/></button>
+                <button onClick={() => handleDelete(ex.id)} className="p-2 text-journey-red"><Trash2 size={16}/></button>
+              </div>
             </div>
-            <div className="flex items-center gap-4">
-              <p className="font-black text-journey-brown text-lg">{ex.currency === 'JPY' ? '¥' : '$'} {ex.amount.toLocaleString()}</p>
-              <button onClick={() => handleDelete(ex.id)} className="text-journey-brown/10 hover:text-journey-red"><Trash2 size={16}/></button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
+      <button onClick={() => { setEditingItem(null); setForm({ title: '', amount: '', currency: 'JPY', payer: members[0]?.name || '我', category: '食', splitCount: members.length }); setShowForm(true); }} className="fixed bottom-32 right-6 w-16 h-16 bg-journey-green text-white rounded-full shadow-2xl flex items-center justify-center z-40 border-4 border-white active:scale-90 transition-transform"><Plus size={32} /></button>
+
       {showForm && (
-        <div className="fixed inset-0 z-[100] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
-          <div className="bg-white w-full max-w-sm rounded-t-[4rem] sm:rounded-[3.5rem] p-10 shadow-2xl space-y-8">
-            <h3 className="text-2xl font-black text-journey-brown italic">New Expense</h3>
-            <div className="space-y-6">
-              <input placeholder="消費項目" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black focus:outline-none shadow-inner" />
-              <div className="flex gap-3">
-                <input type="number" placeholder="金額" value={amount} onChange={e => setAmount(e.target.value)} className="flex-grow bg-journey-cream p-5 rounded-[2rem] text-2xl font-black focus:outline-none shadow-inner" />
-                <button onClick={() => setCurrency(currency === 'JPY' ? 'HKD' : 'JPY')} className="bg-journey-accent px-6 rounded-[2rem] font-black">{currency}</button>
+        <div className="fixed inset-0 z-[200] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-t-[4rem] sm:rounded-[3rem] p-10 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto relative">
+            <button onClick={() => setShowForm(false)} className="absolute right-10 top-10 text-journey-brown/20"><X /></button>
+            <h3 className="text-2xl font-black text-journey-brown italic">新增開支</h3>
+            <div className="space-y-4">
+              <input placeholder="消費內容" value={form.title} onChange={e => setForm({...form, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-[1.5rem] font-black focus:outline-none" />
+              <div className="flex gap-2">
+                <input type="number" placeholder="金額" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} className="flex-grow bg-journey-cream p-5 rounded-[1.5rem] text-2xl font-black focus:outline-none" />
+                <button onClick={() => setForm({...form, currency: form.currency === 'JPY' ? 'HKD' : 'JPY'})} className="bg-journey-accent px-4 rounded-[1.5rem] font-black text-xs">{form.currency}</button>
               </div>
-              <select value={payer} onChange={e => setPayer(e.target.value)} className="w-full bg-journey-cream p-5 rounded-[1.5rem] font-black shadow-inner">
-                {members.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
-              </select>
+              <div className="grid grid-cols-2 gap-2">
+                  <select value={form.payer} onChange={e => setForm({...form, payer: e.target.value})} className="w-full bg-journey-cream p-4 rounded-xl font-black text-xs outline-none">
+                      {members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                  </select>
+                  <input type="number" min="1" value={form.splitCount} onChange={e => setForm({...form, splitCount: Number(e.target.value)})} className="w-full bg-journey-cream p-4 rounded-xl font-black text-xs outline-none" placeholder="人數" />
+              </div>
             </div>
-            <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-6 rounded-[2.5rem] shadow-lg active:scale-95">確認送出</button>
-            <button onClick={() => setShowForm(false)} className="w-full text-journey-brown/30 font-black">取消</button>
+            <button onClick={handleSave} className="w-full bg-journey-darkGreen text-white font-black py-6 rounded-[2rem] shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
+              <Save size={20} /> 儲存
+            </button>
           </div>
         </div>
       )}
