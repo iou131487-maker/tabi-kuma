@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { CheckCircle, Circle, Briefcase, ShoppingBag, ListTodo, Plus, X, Loader2, Send, ChevronRight, ChevronDown, Camera, Image as ImageIcon, Trash2, Edit2, Maximize2 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
-const PlanningView: React.FC = () => {
+const PlanningView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [activeTab, setActiveTab] = useState<'todo' | 'packing' | 'shopping'>('todo');
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,7 +16,8 @@ const PlanningView: React.FC = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const tripId = 'hokkaido-2024';
+  // 統一 tripId 生成邏輯
+  const tripId = tripConfig.title ? `trip-${tripConfig.title.replace(/\s+/g, '-').toLowerCase()}` : 'default-trip';
 
   const fetchData = async () => {
     setLoading(true);
@@ -36,7 +37,7 @@ const PlanningView: React.FC = () => {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, [activeTab]);
+  useEffect(() => { fetchData(); }, [activeTab, tripId]);
 
   const toggleExpand = (id: string) => {
     const next = new Set(expandedItems);
@@ -78,7 +79,6 @@ const PlanningView: React.FC = () => {
     e.stopPropagation();
     if (!confirm('確定要刪除這個項目嗎？（這將同時刪除所有子項目喔！）')) return;
     
-    // 找出所有子項目一起刪除
     const idsToDelete = [id];
     const findChildren = (pid: string) => {
       items.filter(i => i.parent_id === pid).forEach(c => {
