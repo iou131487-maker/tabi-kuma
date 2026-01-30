@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { CATEGORY_ICONS, THEME_COLORS } from '../constants';
 import { Clock, MapPin, Sparkles, Loader2, Plus, Send, X, Calendar as CalendarIcon, Save, Trash2, Compass } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
@@ -10,7 +10,6 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [scheduleData, setScheduleData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [aiTip, setAiTip] = useState<string>('旅人，今天想去哪裡旅行呢？🌸');
-  
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingItem, setEditingItem] = useState<any | null>(null);
 
@@ -20,20 +19,23 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
   const [newNote, setNewNote] = useState('');
 
   const days = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
-  const tripId = tripConfig.id || 'default-trip';
+  const tripId = tripConfig.id;
 
-  const fetchSchedule = async () => {
+  // 使用 useCallback 封裝讀取邏輯，確保 tripId 一致性
+  const fetchSchedule = useCallback(async () => {
+    if (!tripId) return;
     setLoading(true);
     
-    // 1. 先從本地快取讀取（快速載入）
-    const saved = localStorage.getItem(`schedule_${tripId}_day_${selectedDay}`);
+    // 1. 立即讀取本地快取（確保 F5 瞬間有畫面）
+    const localKey = `schedule_${tripId}_day_${selectedDay}`;
+    const saved = localStorage.getItem(localKey);
     if (saved) {
       setScheduleData(JSON.parse(saved));
     } else {
       setScheduleData([]);
     }
 
-    // 2. 異步同步雲端（正確做法：只要連線成功，就以雲端為準）
+    // 2. 向雲端同步
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase
@@ -43,45 +45,21 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
           .eq('day_index', selectedDay)
           .order('time', { ascending: true });
 
-        if (!error) {
-          // 關鍵修復：即使 data 是空的 []，也應該更新並儲存，否則新加入的設備會一直看到舊資料
-          const finalData = data || [];
-          setScheduleData(finalData);
-          localStorage.setItem(`schedule_${tripId}_day_${selectedDay}`, JSON.stringify(finalData));
+        if (!error && data) {
+          // 只有當確定抓到的是「目前行程」的資料時才覆蓋
+          setScheduleData(data);
+          localStorage.setItem(localKey, JSON.stringify(data));
         }
       } catch (e) {
-        console.warn("Cloud fetch error, sticking with local cache.");
+        console.error("Schedule Cloud Fetch Error:", e);
       }
     }
-    
     setLoading(false);
-  };
-
-  useEffect(() => {
-    fetchSchedule();
   }, [selectedDay, tripId]);
 
   useEffect(() => {
-    const fetchAiTip = async () => {
-      const apiKey = process.env.API_KEY;
-      if (!apiKey) return;
-      try {
-        const ai = new GoogleGenAI({ apiKey });
-        const prompt = scheduleData.length > 0 
-          ? `今日行程有：${scheduleData.map(d => d.location).join(', ')}。請給出一句日系溫馨的簡短旅遊建議，包含 emoji，30字以內。`
-          : `正在計畫「${tripConfig.title}」，請說一句溫馨的鼓勵。`;
-          
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: prompt,
-        });
-        setAiTip(response.text || '今天也是適合旅行的好日子！🍃');
-      } catch (e) {
-        setAiTip('今天也要帶著開心的心情出發喔！✨');
-      }
-    };
-    fetchAiTip();
-  }, [scheduleData, selectedDay, tripConfig.title]);
+    fetchSchedule();
+  }, [fetchSchedule]);
 
   const handleSaveItem = async () => {
     if (!newLocation.trim()) return;
@@ -97,6 +75,22 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
       trip_id: tripId
     };
 
+    // 核心修復：先更新雲端，確保持久化
+    if (isSupabaseConfigured && supabase) {
+      try {
+        if (editingItem) {
+          await supabase.from('schedules').update(payload).eq('id', editingItem.id);
+        } else {
+          await supabase.from('schedules').insert([payload]);
+        }
+      } catch (e) {
+        alert("雲端儲存失敗，請檢查網路連線");
+        return;
+      }
+    }
+
+    // 雲端成功後才更新本地
+    const localKey = `schedule_${tripId}_day_${selectedDay}`;
     let updatedData;
     if (editingItem) {
       updatedData = scheduleData.map(d => d.id === editingItem.id ? payload : d);
@@ -105,29 +99,22 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
     }
     
     setScheduleData(updatedData);
-    localStorage.setItem(`schedule_${tripId}_day_${selectedDay}`, JSON.stringify(updatedData));
-
-    if (isSupabaseConfigured && supabase) {
-      if (editingItem) {
-        supabase.from('schedules').update(payload).eq('id', editingItem.id).then();
-      } else {
-        supabase.from('schedules').insert([payload]).then();
-      }
-    }
-
+    localStorage.setItem(localKey, JSON.stringify(updatedData));
     resetForm();
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('確定要刪除這個行程嗎？')) return;
     
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase.from('schedules').delete().eq('id', id);
+      if (error) return alert("刪除失敗");
+    }
+
+    const localKey = `schedule_${tripId}_day_${selectedDay}`;
     const updatedData = scheduleData.filter(d => d.id !== id);
     setScheduleData(updatedData);
-    localStorage.setItem(`schedule_${tripId}_day_${selectedDay}`, JSON.stringify(updatedData));
-
-    if (isSupabaseConfigured && supabase) {
-      supabase.from('schedules').delete().eq('id', id).then();
-    }
+    localStorage.setItem(localKey, JSON.stringify(updatedData));
     resetForm();
   };
 
@@ -151,23 +138,16 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
 
   const openInGoogleMaps = (e: React.MouseEvent, location: string) => {
     e.stopPropagation();
-    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
-    window.open(url, '_blank');
+    window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`, '_blank');
   };
 
   return (
     <div className="space-y-6 pb-20">
-      <div className="bg-journey-accent rounded-4xl p-6 shadow-soft flex items-center justify-between overflow-hidden relative border-4 border-white animate-in slide-in-from-top">
-        <div className="absolute -right-6 -bottom-6 opacity-10 transform rotate-12">
-           <Compass size={120} className="text-journey-brown" />
-        </div>
+      <div className="bg-journey-accent rounded-4xl p-6 shadow-soft flex items-center justify-between overflow-hidden relative border-4 border-white">
+        <div className="absolute -right-6 -bottom-6 opacity-10 transform rotate-12"><Compass size={120} className="text-journey-brown" /></div>
         <div className="relative z-10">
           <p className="text-[10px] font-black text-journey-brown/40 uppercase tracking-[0.2em]">行程準備中</p>
-          <h2 className="text-4xl font-black text-journey-brown mt-1 tracking-tight">Enjoy!</h2>
-        </div>
-        <div className="relative z-10 bg-white/40 backdrop-blur-md p-4 rounded-3xl border border-white/40 flex flex-col items-center justify-center min-w-[80px]">
-           <Sparkles className="text-journey-brown/30 mb-1" size={16} />
-           <span className="text-[10px] font-black text-journey-brown uppercase tracking-widest">Go!</span>
+          <h2 className="text-4xl font-black text-journey-brown mt-1 tracking-tight italic">Enjoy!</h2>
         </div>
       </div>
 
@@ -188,44 +168,28 @@ const ScheduleView: React.FC<{ tripConfig: any }> = ({ tripConfig }) => {
         ))}
       </div>
 
-      <div className="bg-white border-4 border-journey-sand rounded-[2.5rem] p-5 flex gap-4 shadow-soft-sm relative animate-in fade-in">
-        <div className="w-12 h-12 bg-journey-accent rounded-2xl shrink-0 flex items-center justify-center animate-float shadow-sm border-2 border-white">
-           <Sparkles className="text-white" size={24} />
-        </div>
-        <div className="flex flex-col justify-center">
-          <p className="text-[9px] font-black text-journey-brown/30 uppercase tracking-[0.2em]">Travel Tip</p>
-          <p className="text-xs text-journey-brown font-black italic leading-relaxed">"{aiTip}"</p>
-        </div>
-      </div>
-
       <div className="relative">
         {loading && scheduleData.length === 0 ? (
           <div className="flex justify-center py-20 opacity-30"><Loader2 className="animate-spin" /></div>
         ) : scheduleData.length === 0 ? (
           <div className="bg-white/40 rounded-4xl p-16 text-center border-4 border-dashed border-journey-sand">
             <CalendarIcon size={40} className="mx-auto text-journey-sand mb-4" />
-            <p className="text-journey-brown/40 text-sm font-black leading-relaxed">開始規劃行程吧 ✨</p>
+            <p className="text-journey-brown/40 text-sm font-black leading-relaxed">這天還沒有行程 ✨</p>
           </div>
         ) : (
           <div className="space-y-5 relative before:absolute before:left-[21px] before:top-4 before:bottom-4 before:w-1 before:bg-journey-sand/50">
-            {scheduleData.map((item, i) => (
+            {scheduleData.map((item) => (
               <div key={item.id} onClick={() => openEdit(item)} className="flex gap-4 animate-in fade-in slide-in-from-bottom-4 group">
                 <div className={`z-10 w-11 h-11 rounded-2xl flex items-center justify-center shadow-soft-sm shrink-0 border-4 border-white ${THEME_COLORS[item.category as keyof typeof THEME_COLORS] || 'bg-journey-sand'} text-white`}>
                   {CATEGORY_ICONS[item.category as keyof typeof CATEGORY_ICONS] || <Clock size={16} />}
                 </div>
-                <div className={`bg-white rounded-[2rem] p-5 flex-grow shadow-soft border-l-8 ${item.category === 'attraction' ? 'border-journey-green' : 'border-journey-sand'} active:scale-[0.98] transition-all cursor-pointer relative group/card`}>
+                <div className={`bg-white rounded-[2rem] p-5 flex-grow shadow-soft border-l-8 ${item.category === 'attraction' ? 'border-journey-green' : 'border-journey-sand'} active:scale-[0.98] transition-all cursor-pointer relative`}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[10px] font-black text-journey-brown/40 px-2 py-0.5 rounded-full bg-journey-cream">{item.time}</span>
-                    <button 
-                      onClick={(e) => openInGoogleMaps(e, item.location || item.title)}
-                      className="w-8 h-8 rounded-full bg-journey-blue/20 text-journey-blue flex items-center justify-center hover:bg-journey-blue hover:text-white transition-all active:scale-90"
-                      title="在地圖中開啟"
-                    >
-                      <MapPin size={14} />
-                    </button>
+                    <button onClick={(e) => openInGoogleMaps(e, item.location)} className="w-8 h-8 rounded-full bg-journey-blue/20 text-journey-blue flex items-center justify-center"><MapPin size={14} /></button>
                   </div>
-                  <h4 className="font-black text-journey-brown text-lg leading-tight pr-8">{item.location || item.title}</h4>
-                  {item.note && <p className="text-[10px] text-journey-brown/60 italic mt-2 line-clamp-1">{item.note}</p>}
+                  <h4 className="font-black text-journey-brown text-lg leading-tight pr-8">{item.location}</h4>
+                  {item.note && <p className="text-[10px] text-journey-brown/60 italic mt-2">{item.note}</p>}
                 </div>
               </div>
             ))}
