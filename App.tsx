@@ -2,8 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
-import { initSupabaseAuth, isSupabaseConfigured } from './supabase'; 
-import { Settings2, Save, X, Plane, Edit3, Camera, Copy, Loader2, Link, LogIn, Database, AlertTriangle, RefreshCw } from 'lucide-react';
+import { initSupabaseAuth } from './supabase'; 
+import { Settings2, Save, X, Plane, Copy, Loader2, Share2, MousePointer2, Cloud } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -27,79 +27,94 @@ const BACKGROUND_COLORS: Record<string, string> = {
   '/members': '#FFF3E0',
 };
 
-const SQL_INSTRUCTIONS = `
--- 建立資料表指令 --
-create table if not exists schedules ( id text primary key, trip_id text, day_index int, title text, time text, category text, location text, created_at timestamptz default now() );
-create table if not exists expenses ( id text primary key, trip_id text, title text, amount numeric, currency text, payer text, category text, split_count int default 1, created_at timestamptz default now() );
-create table if not exists members ( id text primary key, trip_id text, name text, avatar text, created_at timestamptz default now() );
-create table if not exists bookings ( id text primary key, trip_id text, type text, title text, "from" text, "to" text, time text, created_at timestamptz default now() );
-create table if not exists planning_items ( id text primary key, trip_id text, type text, text text, completed boolean, parent_id text, imageUrl text, created_at timestamptz default now() );
-create table if not exists journals ( id text primary key, trip_id text, content text, location text, images text[], created_at timestamptz default now() );
-
--- 開啟權限 --
-alter table schedules enable row level security; create policy "Public" on schedules for all using (true) with check (true);
-alter table expenses enable row level security; create policy "Public" on expenses for all using (true) with check (true);
-alter table members enable row level security; create policy "Public" on members for all using (true) with check (true);
-alter table bookings enable row level security; create policy "Public" on bookings for all using (true) with check (true);
-alter table planning_items enable row level security; create policy "Public" on planning_items for all using (true) with check (true);
-alter table journals enable row level security; create policy "Public" on journals for all using (true) with check (true);
-`;
-
 const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolean, onClose: () => void, config: any, onSave: (newConfig: any) => void }) => {
   const [formData, setFormData] = useState(config);
   const [joinId, setJoinId] = useState('');
 
   useEffect(() => { if (isOpen) setFormData(config); }, [isOpen, config]);
 
-  const handleSave = () => {
-    onSave(formData);
-    onClose();
+  const handleClone = () => {
+    if (!confirm('將複製目前所有資料（行程、開支等）並建立一個新的 ID。這將使此裝置擁有獨立的版本，確定嗎？')) return;
+    
+    const newId = `trip-${Math.random().toString(36).substr(2, 9)}`;
+    const keysToClone = [
+      `mem_${config.id}`, 
+      `exp_${config.id}`, 
+      `book_${config.id}`, 
+      `jrnl_${config.id}`
+    ];
+    
+    keysToClone.forEach(key => {
+      const data = localStorage.getItem(key);
+      if (data) {
+        const newKey = key.replace(config.id, newId);
+        localStorage.setItem(newKey, data);
+      }
+    });
+
+    for (let i = 0; i < 10; i++) {
+      const sched = localStorage.getItem(`sched_${config.id}_day${i}`);
+      if (sched) localStorage.setItem(`sched_${newId}_day${i}`, sched);
+    }
+    
+    ['todo', 'packing', 'shopping'].forEach(type => {
+      const plan = localStorage.getItem(`plan_${config.id}_${type}`);
+      if (plan) localStorage.setItem(`plan_${newId}_${type}`, plan);
+    });
+
+    onSave({ ...formData, id: newId });
+    alert(`克隆成功！新行程 ID: ${newId}`);
+    window.location.reload();
   };
 
   return !isOpen ? null : (
     <div className="fixed inset-0 z-[200] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center animate-in fade-in">
       <div className="bg-white w-full max-w-md rounded-t-[3.5rem] sm:rounded-[3rem] p-10 shadow-2xl space-y-8 max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center"><h3 className="text-xl font-black text-journey-brown italic">同步 & 行程設定</h3><button onClick={onClose}><X className="text-journey-brown/20" /></button></div>
-        
-        <div className="bg-journey-red/10 p-5 rounded-3xl border-2 border-journey-red/20 space-y-3">
-             <h4 className="text-sm font-black text-journey-red flex items-center gap-2"><Database size={16}/> 同步失敗修復</h4>
-             <p className="text-[10px] text-journey-brown/60">若 F5 資料消失，請在電腦端複製 SQL 指令並到 Supabase SQL Editor 貼上執行。</p>
-             <button onClick={() => { navigator.clipboard.writeText(SQL_INSTRUCTIONS); alert('SQL 指令已複製！'); }} className="w-full bg-white py-3 rounded-xl text-xs font-black text-journey-red shadow-sm border border-journey-red/20 active:scale-95">
-                複製 SQL 修復指令
-             </button>
+        <div className="flex justify-between items-center">
+          <h3 className="text-xl font-black text-journey-brown italic">同步與模板設定</h3>
+          <button onClick={onClose}><X className="text-journey-brown/20" /></button>
         </div>
-
+        
         <div className="space-y-4">
-          <div className="space-y-1"><label className="text-[10px] font-black text-journey-brown/30 ml-2">行程標題</label><input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-4 rounded-2xl font-black focus:outline-none" /></div>
-          <div className="space-y-1"><label className="text-[10px] font-black text-journey-brown/30 ml-2">此裝置代碼 (分享給隊友)</label>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-journey-brown/30 ml-2 uppercase">行程標題</label>
+            <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-4 rounded-2xl font-black focus:outline-none" />
+          </div>
+
+          <div className="p-5 bg-journey-blue/5 rounded-3xl border-2 border-journey-blue/10 space-y-4">
+            <h4 className="text-sm font-black text-journey-blue flex items-center gap-2"><Share2 size={16}/> 行程 ID (目前裝置)</h4>
             <div className="flex gap-2">
-                <input readOnly value={config.id} className="flex-grow bg-journey-blue/10 p-4 rounded-2xl font-mono text-xs font-black text-journey-blue" />
-                <button onClick={() => { navigator.clipboard.writeText(config.id); alert('代碼已複製！'); }} className="px-4 bg-journey-blue text-white rounded-2xl"><Copy size={16}/></button>
+                <input readOnly value={config.id} className="flex-grow bg-white p-4 rounded-2xl font-mono text-xs font-black text-journey-blue border border-journey-blue/10" />
+                <button onClick={() => { navigator.clipboard.writeText(config.id); alert('代碼已複製！'); }} className="px-4 bg-journey-blue text-white rounded-2xl active:scale-90 transition-transform"><Copy size={16}/></button>
             </div>
+            <button onClick={handleClone} className="w-full bg-white border-2 border-journey-blue text-journey-blue py-4 rounded-2xl text-xs font-black flex items-center justify-center gap-2 active:scale-95 transition-all">
+              <MousePointer2 size={14} /> 複製目前行程為獨立版本
+            </button>
           </div>
         </div>
 
         <div className="p-5 bg-journey-green/10 rounded-3xl space-y-3">
-            <p className="text-[10px] font-black text-journey-darkGreen uppercase opacity-60">加入隊友的行程</p>
+            <p className="text-[10px] font-black text-journey-darkGreen uppercase opacity-60">切換至其他行程 ID</p>
             <div className="flex gap-2">
-                <input placeholder="貼上代碼..." value={joinId} onChange={e => setJoinId(e.target.value)} className="flex-grow bg-white p-3 rounded-xl text-xs font-black focus:outline-none" />
+                <input placeholder="貼上 ID..." value={joinId} onChange={e => setJoinId(e.target.value)} className="flex-grow bg-white p-3 rounded-xl text-xs font-black focus:outline-none" />
                 <button onClick={() => { 
                     if(!joinId) return;
-                    if(confirm('確定要切換行程？這將同步隊友的雲端資料。')) { 
+                    if(confirm('確定要切換？這將改為同步該 ID 的雲端資料。')) { 
                         localStorage.setItem('trip_config', JSON.stringify({...config, id: joinId})); 
                         window.location.reload(); 
                     } 
-                }} className="px-4 bg-journey-darkGreen text-white rounded-xl font-black text-xs">加入行程</button>
+                }} className="px-4 bg-journey-darkGreen text-white rounded-xl font-black text-xs active:scale-90">切換</button>
             </div>
         </div>
 
-        <button onClick={handleSave} className="w-full bg-journey-brown text-white font-black py-5 rounded-[2rem] shadow-lg active:scale-95 transition-transform"><Save size={20} className="inline mr-2" /> 儲存變更</button>
+        <button onClick={() => { onSave(formData); onClose(); }} className="w-full bg-journey-brown text-white font-black py-5 rounded-[2rem] shadow-lg active:scale-95 transition-transform">
+          <Save size={20} className="inline mr-2" /> 儲存設定
+        </button>
       </div>
     </div>
   );
 };
 
-// Fix: Add the missing Header component
 const Header = ({ tripConfig, onOpenSettings }: { tripConfig: any, onOpenSettings: () => void }) => {
   return (
     <header className="px-6 pt-12 pb-8 flex justify-between items-start">
@@ -124,6 +139,48 @@ const Header = ({ tripConfig, onOpenSettings }: { tripConfig: any, onOpenSetting
   );
 };
 
+// 全新的可愛飛機載入畫面
+const LoadingScreen = () => {
+  return (
+    <div className="h-screen w-screen flex flex-col items-center justify-center bg-sky-400 overflow-hidden relative">
+      {/* 漂浮的小雲朵們 */}
+      <div className="absolute top-1/4 left-1/4 animate-float opacity-80"><Cloud className="text-white" size={48} fill="white" /></div>
+      <div className="absolute top-1/3 right-1/4 animate-bounce-slow opacity-60 scale-75" style={{ animationDelay: '1s' }}><Cloud className="text-white" size={60} fill="white" /></div>
+      <div className="absolute bottom-1/4 left-1/3 animate-float opacity-70 scale-50" style={{ animationDelay: '2s' }}><Cloud className="text-white" size={40} fill="white" /></div>
+      <div className="absolute top-1/2 right-10 animate-bounce-slow opacity-40 scale-90" style={{ animationDelay: '0.5s' }}><Cloud className="text-white" size={50} fill="white" /></div>
+
+      {/* 飛機中心組件 */}
+      <div className="relative z-10 flex flex-col items-center">
+        <div className="bg-white/20 p-8 rounded-full backdrop-blur-sm animate-pulse mb-8">
+           <div className="animate-float">
+             <Plane className="text-white rotate-45 drop-shadow-lg" size={80} fill="white" />
+           </div>
+        </div>
+        
+        {/* 會跳動的文字 */}
+        <div className="flex gap-1">
+          {"快樂旅程準備中。。。".split("").map((char, i) => (
+            <span 
+              key={i} 
+              className="text-white text-xl font-black italic drop-shadow-md animate-bounce-slow inline-block"
+              style={{ animationDelay: `${i * 0.1}s` }}
+            >
+              {char}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* 底部裝飾線條 */}
+      <div className="absolute bottom-10 flex gap-4 opacity-20">
+         <div className="h-1 w-20 bg-white rounded-full animate-pulse"></div>
+         <div className="h-1 w-8 bg-white rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
+         <div className="h-1 w-12 bg-white rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
+      </div>
+    </div>
+  );
+};
+
 const AppContent = () => {
   const [initializing, setInitializing] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -140,10 +197,13 @@ const AppContent = () => {
   useEffect(() => {
     document.body.style.backgroundColor = currentBg;
     localStorage.setItem('trip_config', JSON.stringify(tripConfig));
-    initSupabaseAuth().then(() => setInitializing(false));
+    initSupabaseAuth().then(() => {
+      // 稍微延遲讓動畫感更好
+      setTimeout(() => setInitializing(false), 2000);
+    });
   }, [tripConfig, currentBg]);
 
-  if (initializing) return <div className="h-screen w-screen flex items-center justify-center bg-journey-cream"><Loader2 className="text-journey-green animate-spin" size={48} /></div>;
+  if (initializing) return <LoadingScreen />;
 
   return (
     <div className="min-h-screen pb-32">
