@@ -40,20 +40,19 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
   }, [isOpen, config]);
 
   /**
-   * 核心「種植」函式：將雲端抓到的資料精準寫入手機 LocalStorage
+   * 核心「種植」函式：確保 localStorage 的 Key 與 View 組件內部邏輯完全對接
    */
   const preheatLocalCache = (table: string, tripId: string, data: any[]) => {
     try {
       if (table === 'schedules') {
-        // 分天種植
+        // 分天種植：對應 ScheduleView 的 `sched_${tripId}_day${selectedDay}`
         for (let i = 0; i < 7; i++) {
           const dayData = data.filter(item => item.day_index === i);
           localStorage.setItem(`sched_${tripId}_day${i}`, JSON.stringify(dayData));
         }
-        // 初始化預設查看天數
-        localStorage.setItem(`last_day_${tripId}`, '0');
+        localStorage.setItem(`last_day_${tripId}`, '0'); // 重設為第一天
       } else if (table === 'planning_items') {
-        // 分類種植
+        // 分類種植：對應 PlanningView 的 `plan_${tripId}_${activeTab}`
         ['todo', 'packing', 'shopping'].forEach(type => {
           const typeData = data.filter(item => item.type === type);
           localStorage.setItem(`plan_${tripId}_${type}`, JSON.stringify(typeData));
@@ -73,45 +72,47 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
   };
 
   /**
-   * 切換並同步：將他人的行程資料「種植」到自己手機
+   * 切換行程：從雲端下載目標 ID 的全量資料並種植到手機本地
    */
   const handleSwitchAndSync = async () => {
     if (!targetId || targetId.length < 5) return alert('請輸入有效的行程 ID');
     if (!supabase) return alert('雲端未連線，無法同步');
     
     setCloning(true);
-    setCloneStep('正在從雲端下載全量資料...');
+    setCloneStep('正在與雲端伺服器建立連結...');
     
     try {
       const tables = ['schedules', 'bookings', 'planning_items', 'expenses', 'journals', 'members'];
+      
+      // 逐表抓取並「種植」
       for (const table of tables) {
-        setCloneStep(`正在同步: ${table}...`);
+        setCloneStep(`正在種植本地緩存: ${table}...`);
         const { data, error } = await supabase.from(table).select('*').eq('trip_id', targetId);
         if (!error && data) {
           preheatLocalCache(table, targetId, data);
         }
       }
 
-      // 嘗試推斷一個適合的標題 (例如使用第一個行程的標題，或預設)
+      // 配置種植：更新全域行程 ID
       const newConfig = { 
         ...DEFAULT_CONFIG, 
         id: targetId, 
-        title: "已載入的行程" 
+        title: "已同步的行程" 
       };
       
       localStorage.setItem('trip_config', JSON.stringify(newConfig));
-      alert('✨ 全量資料已「種植」成功！手機現在可以離線查看了。');
+      alert('✨ 種植完成！所有行程資料已同步至您的手機，現在可以開始離線使用了。');
       window.location.reload();
     } catch (err) {
       console.error(err);
-      alert('同步失敗，請檢查網路或 ID。');
+      alert('同步失敗，請檢查網路。');
     } finally {
       setCloning(false);
     }
   };
 
   /**
-   * 深度克隆並種植：建立雲端副本的同時，同步寫入手機本地
+   * 深度克隆：在雲端建立新 ID 資料的同時，同步種植到本地
    */
   const performDeepClone = async (sourceId: string, customTitle?: string) => {
     if (!supabase) return alert('雲端未連線');
@@ -122,14 +123,14 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
     
     try {
       for (const table of tables) {
-        setCloneStep(`讀取來源: ${table}...`);
+        setCloneStep(`讀取模版資料: ${table}...`);
         const { data, error } = await supabase.from(table).select('*').eq('trip_id', sourceId);
         if (error) throw error;
         
         if (data && data.length > 0) {
-          setCloneStep(`建立副本並種植: ${table}...`);
+          setCloneStep(`轉換並種植新副本: ${table}...`);
           
-          // ID 映射（解決清單父子項指向問題）
+          // ID 映射 (針對清單父子項目)
           const idMap = new Map();
           const newData = data.map(item => {
             const oldId = item.id;
@@ -152,7 +153,7 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
               }))
             : newData;
           
-          // 雙重操作：1. 寫入雲端 2. 種植到手機本地
+          // 同步執行：雲端 insert + 本地種植
           await supabase.from(table).insert(finalData);
           preheatLocalCache(table, newId, finalData);
         }
@@ -165,11 +166,11 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
       };
       
       localStorage.setItem('trip_config', JSON.stringify(newConfig));
-      alert(`🎉 克隆成功！\n專屬 ID: ${newId}\n資料已同步至手機緩存。`);
+      alert(`🎉 副本已種植成功！\n全新專屬 ID: ${newId}\n您可以將此 ID 分享給其他隊友共同編輯。`);
       window.location.reload();
     } catch (err) {
       console.error(err);
-      alert('克隆過程中發生錯誤。');
+      alert('克隆種植失敗。');
     } finally {
       setCloning(false);
       setCloneStep('');
@@ -186,7 +187,7 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
                <Plane className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-journey-green/20" size={24} />
              </div>
              <div className="text-center px-10">
-               <p className="font-black text-journey-brown text-xl mb-1">正在全量同步中...</p>
+               <p className="font-black text-journey-brown text-xl mb-1">正在全量種植資料中...</p>
                <p className="text-sm font-bold text-journey-brown/40 animate-pulse">{cloneStep}</p>
              </div>
           </div>
@@ -194,11 +195,11 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
         
         <div className="flex justify-between items-start">
           <div>
-            <h3 className="text-2xl font-black text-journey-brown italic uppercase tracking-tighter">行程同步與模版</h3>
+            <h3 className="text-2xl font-black text-journey-brown italic uppercase tracking-tighter">行程同步與備份</h3>
             <div className="flex items-center gap-2 mt-1">
                {isOnline ? <Wifi size={12} className="text-journey-green"/> : <WifiOff size={12} className="text-journey-red"/>}
                <span className={`text-[10px] font-black uppercase ${isOnline ? 'text-journey-green' : 'text-journey-red'}`}>
-                 {isOnline ? 'Cloud Sync Active' : 'Offline Mode'}
+                 {isOnline ? 'Cloud Sync Enabled' : 'Offline Mode'}
                </span>
             </div>
           </div>
@@ -208,25 +209,25 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
         <div className="space-y-6">
           <div className="space-y-2">
             <label className="text-[10px] font-black text-journey-brown/30 ml-3 uppercase tracking-widest">目前行程名稱</label>
-            <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black focus:outline-none border-4 border-transparent focus:border-journey-green/20" />
+            <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black focus:outline-none border-4 border-transparent focus:border-journey-green/20 shadow-inner" />
           </div>
 
           <div className="p-6 bg-journey-accent/10 rounded-[2.5rem] border-4 border-journey-accent/20 space-y-4">
               <div className="flex items-center gap-2 text-journey-brown">
                 <Download size={18} className="text-journey-brown/40" />
-                <p className="text-[10px] font-black uppercase tracking-widest">匯入他人行程模版</p>
+                <p className="text-[10px] font-black uppercase tracking-widest">匯入行程 ID</p>
               </div>
               <input 
-                placeholder="貼上模版 ID..." 
+                placeholder="在此貼上模版 ID..." 
                 value={targetId} 
                 onChange={e => setTargetId(e.target.value)} 
                 className="w-full bg-white p-4 rounded-2xl text-xs font-black focus:outline-none border-2 border-journey-accent/10 focus:border-journey-accent/40" 
               />
               <div className="grid grid-cols-2 gap-2">
-                  <button onClick={handleSwitchAndSync} className="py-4 bg-white border-2 border-journey-accent text-journey-brown rounded-2xl font-black text-[10px] uppercase tracking-tighter active:scale-95">僅切換查看</button>
+                  <button onClick={handleSwitchAndSync} className="py-4 bg-white border-2 border-journey-accent text-journey-brown rounded-2xl font-black text-[10px] uppercase tracking-tighter active:scale-95 shadow-soft-sm">僅切換查看</button>
                   <button onClick={() => {
                     if (!targetId) return alert('請輸入模版 ID');
-                    if (confirm(`確定要匯入並建立您的專屬副本嗎？`)) {
+                    if (confirm(`確定要將此行程種植到您的手機並建立專屬副本嗎？`)) {
                       performDeepClone(targetId, "匯入的夢幻行程");
                     }
                   }} className="py-4 bg-journey-accent text-journey-brown rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-soft-sm active:scale-95">建立我的副本</button>
@@ -234,7 +235,7 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
           </div>
 
           <div className="p-6 bg-journey-blue/5 rounded-[2.5rem] border-4 border-journey-blue/10 space-y-4">
-            <h4 className="text-xs font-black text-journey-blue flex items-center gap-2 uppercase tracking-wider"><Share2 size={16}/> 分享我的 ID</h4>
+            <h4 className="text-xs font-black text-journey-blue flex items-center gap-2 uppercase tracking-wider"><Share2 size={16}/> 分享我的行程</h4>
             <div className="flex gap-2 bg-white p-2 rounded-2xl border-2 border-journey-blue/5">
                 <input readOnly value={config.id} className="flex-grow bg-transparent px-3 py-2 font-mono text-xs font-black text-journey-blue focus:outline-none" />
                 <button onClick={() => { navigator.clipboard.writeText(config.id); alert('ID 已複製！'); }} className="p-3 bg-journey-blue text-white rounded-xl active:scale-90 transition-transform"><Copy size={16}/></button>
@@ -244,7 +245,7 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
               disabled={cloning}
               className="w-full bg-white border-2 border-journey-blue/30 text-journey-blue py-3 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all"
             >
-              <MousePointer2 size={12} /> 備份目前行程為新副本
+              <MousePointer2 size={12} /> 將目前行程存為新備份
             </button>
           </div>
         </div>
