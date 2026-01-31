@@ -39,7 +39,35 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
     setIsOnline(!!supabase);
   }, [isOpen, config]);
 
-  // 核心功能：從指定 ID 深度克隆資料
+  // 輔助函式：根據 table 名稱將資料預熱到本地快取
+  const preheatLocalCache = (table: string, tripId: string, data: any[]) => {
+    try {
+      if (table === 'schedules') {
+        // 行程需按天分組
+        for (let i = 0; i < 7; i++) {
+          const dayData = data.filter(item => item.day_index === i);
+          localStorage.setItem(`sched_${tripId}_day${i}`, JSON.stringify(dayData));
+        }
+      } else if (table === 'planning_items') {
+        // 清單需按類型分組
+        ['todo', 'packing', 'shopping'].forEach(type => {
+          const typeData = data.filter(item => item.type === type);
+          localStorage.setItem(`plan_${tripId}_${type}`, JSON.stringify(typeData));
+        });
+      } else if (table === 'bookings') {
+        localStorage.setItem(`book_${tripId}`, JSON.stringify(data));
+      } else if (table === 'expenses') {
+        localStorage.setItem(`exp_${tripId}`, JSON.stringify(data));
+      } else if (table === 'journals') {
+        localStorage.setItem(`jrnl_${tripId}`, JSON.stringify(data));
+      } else if (table === 'members') {
+        localStorage.setItem(`mem_${tripId}`, JSON.stringify(data));
+      }
+    } catch (e) {
+      console.warn("Local cache preheat failed", e);
+    }
+  };
+
   const performDeepClone = async (sourceId: string, customTitle?: string) => {
     if (!supabase) return alert('雲端未連線，無法執行。');
     setCloning(true);
@@ -48,11 +76,12 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
     
     try {
       for (const table of tables) {
-        setCloneStep(`正在同步 ${table}...`);
+        setCloneStep(`正在獲取資料: ${table}...`);
         const { data, error } = await supabase.from(table).select('*').eq('trip_id', sourceId);
         if (error) throw error;
         
         if (data && data.length > 0) {
+          setCloneStep(`正在建立副本: ${table}...`);
           const newData = data.map(item => {
             const { id, ...rest } = item;
             return {
@@ -62,24 +91,31 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
               created_at: new Date().toISOString()
             };
           });
+          
+          // 1. 同步到雲端
           await supabase.from(table).insert(newData);
+          
+          // 2. 重要：同步預熱手機本地快取，確保 reload 後立即可見
+          preheatLocalCache(table, newId, newData);
         }
       }
 
-      // 儲存新配置並跳轉
+      // 儲存新配置
       const newConfig = { 
         ...formData, 
         id: newId, 
         title: customTitle || `${formData.title} (副本)` 
       };
+      
+      // 確保 localStorage 在 reload 前已鎖定
       localStorage.setItem('trip_config', JSON.stringify(newConfig));
       onSave(newConfig);
       
-      alert(`🎉 模版匯入成功！\n已建立全新 ID: ${newId}\n現在您可以開始編輯自己的行程了。`);
+      alert(`🎉 模版匯入成功！\n已為您建立專屬副本 ID: ${newId}\n現在即使離線也可以查看了。`);
       window.location.reload();
     } catch (err) {
       console.error(err);
-      alert('匯入過程中發生錯誤，請確認 ID 是否正確或網路是否穩定。');
+      alert('匯入失敗，請確認模版 ID 是否正確。');
     } finally {
       setCloning(false);
       setCloneStep('');
@@ -88,7 +124,7 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
 
   const handleImportAndClone = () => {
     if (!targetId) return alert('請輸入模版 ID');
-    if (confirm(`確定要以此 ID [${targetId}] 為模版建立新行程嗎？\n這將建立一份完全屬於您的副本。`)) {
+    if (confirm(`確定要匯入 ID [${targetId}] 並建立您的專屬副本嗎？`)) {
       performDeepClone(targetId, "匯入的夢幻行程");
     }
   };
@@ -102,8 +138,8 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
                <div className="animate-spin text-journey-green"><RefreshCw size={64} /></div>
                <Plane className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-journey-green/20" size={24} />
              </div>
-             <div className="text-center">
-               <p className="font-black text-journey-brown text-xl mb-1">正在建立您的專屬副本</p>
+             <div className="text-center px-10">
+               <p className="font-black text-journey-brown text-xl mb-1">正在同步模版資料...</p>
                <p className="text-sm font-bold text-journey-brown/40 animate-pulse">{cloneStep}</p>
              </div>
           </div>
@@ -123,20 +159,18 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
         </div>
         
         <div className="space-y-6">
-          {/* 目前行程設定 */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-journey-brown/30 ml-3 uppercase tracking-widest">目前行程名稱</label>
             <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black focus:outline-none border-4 border-transparent focus:border-journey-green/20" />
           </div>
 
-          {/* 模版匯入區塊 - 重點新增 */}
           <div className="p-6 bg-journey-accent/10 rounded-[2.5rem] border-4 border-journey-accent/20 space-y-4">
               <div className="flex items-center gap-2 text-journey-brown">
                 <Download size={18} className="text-journey-brown/40" />
                 <p className="text-[10px] font-black uppercase tracking-widest">匯入他人行程模版</p>
               </div>
               <input 
-                placeholder="貼上模版 ID (例如 trip-xyz...)" 
+                placeholder="貼上模版 ID..." 
                 value={targetId} 
                 onChange={e => setTargetId(e.target.value)} 
                 className="w-full bg-white p-4 rounded-2xl text-xs font-black focus:outline-none border-2 border-journey-accent/10 focus:border-journey-accent/40" 
@@ -144,7 +178,7 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
               <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => {
                     if(!targetId) return;
-                    if(confirm('確定要直接切換？這會載入原始行程（若您有權限則可編輯）。')) {
+                    if(confirm('確定要切換查看？切換後將載入對方的即時雲端資料。')) {
                       localStorage.setItem('trip_config', JSON.stringify({...config, id: targetId}));
                       window.location.reload();
                     }
@@ -152,23 +186,14 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolea
                   
                   <button onClick={handleImportAndClone} className="py-4 bg-journey-accent text-journey-brown rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-soft-sm active:scale-95">建立我的副本</button>
               </div>
-              <p className="text-[9px] text-journey-brown/40 font-bold leading-relaxed px-1">※ 推薦使用「建立我的副本」，這會將該 ID 的行程完整拷貝一份到新 ID，不會影響到原作者。</p>
           </div>
 
-          {/* ID 分享區塊 */}
           <div className="p-6 bg-journey-blue/5 rounded-[2.5rem] border-4 border-journey-blue/10 space-y-4">
-            <h4 className="text-xs font-black text-journey-blue flex items-center gap-2 uppercase tracking-wider"><Share2 size={16}/> 分享我的 ID 給夥伴</h4>
+            <h4 className="text-xs font-black text-journey-blue flex items-center gap-2 uppercase tracking-wider"><Share2 size={16}/> 分享我的 ID</h4>
             <div className="flex gap-2 bg-white p-2 rounded-2xl border-2 border-journey-blue/5">
                 <input readOnly value={config.id} className="flex-grow bg-transparent px-3 py-2 font-mono text-xs font-black text-journey-blue focus:outline-none" />
-                <button onClick={() => { navigator.clipboard.writeText(config.id); alert('ID 已複製！快發給夥伴吧！'); }} className="p-3 bg-journey-blue text-white rounded-xl active:scale-90 transition-transform"><Copy size={16}/></button>
+                <button onClick={() => { navigator.clipboard.writeText(config.id); alert('ID 已複製！'); }} className="p-3 bg-journey-blue text-white rounded-xl active:scale-90 transition-transform"><Copy size={16}/></button>
             </div>
-            <button 
-              onClick={() => performDeepClone(config.id)}
-              disabled={cloning}
-              className="w-full bg-white border-2 border-journey-blue/30 text-journey-blue py-3 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all"
-            >
-              <MousePointer2 size={12} /> 備份目前行程為新副本
-            </button>
           </div>
         </div>
 
