@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
 import { initSupabaseAuth, supabase } from './supabase'; 
@@ -27,303 +27,45 @@ const BACKGROUND_COLORS: Record<string, string> = {
   '/members': '#FFF3E0',
 };
 
-const TripSettingsModal = ({ isOpen, onClose, config, onSave }: { isOpen: boolean, onClose: () => void, config: any, onSave: (newConfig: any) => void }) => {
-  const [formData, setFormData] = useState(config);
-  const [targetId, setTargetId] = useState('');
-  const [cloning, setCloning] = useState(false);
-  const [cloneStep, setCloneStep] = useState('');
-  const [isOnline, setIsOnline] = useState(true);
-
-  useEffect(() => { 
-    if (isOpen) setFormData(config); 
-    setIsOnline(!!supabase);
-  }, [isOpen, config]);
-
-  /**
-   * 核心「種植」函式：確保 localStorage 的 Key 與 View 組件內部邏輯完全對接
-   */
-  const preheatLocalCache = (table: string, tripId: string, data: any[]) => {
-    try {
-      if (table === 'schedules') {
-        // 分天種植：對應 ScheduleView 的 `sched_${tripId}_day${selectedDay}`
-        for (let i = 0; i < 7; i++) {
-          const dayData = data.filter(item => item.day_index === i);
-          localStorage.setItem(`sched_${tripId}_day${i}`, JSON.stringify(dayData));
-        }
-        localStorage.setItem(`last_day_${tripId}`, '0'); // 重設為第一天
-      } else if (table === 'planning_items') {
-        // 分類種植：對應 PlanningView 的 `plan_${tripId}_${activeTab}`
-        ['todo', 'packing', 'shopping'].forEach(type => {
-          const typeData = data.filter(item => item.type === type);
-          localStorage.setItem(`plan_${tripId}_${type}`, JSON.stringify(typeData));
-        });
-      } else if (table === 'bookings') {
-        localStorage.setItem(`book_${tripId}`, JSON.stringify(data));
-      } else if (table === 'expenses') {
-        localStorage.setItem(`exp_${tripId}`, JSON.stringify(data));
-      } else if (table === 'journals') {
-        localStorage.setItem(`jrnl_${tripId}`, JSON.stringify(data));
-      } else if (table === 'members') {
-        localStorage.setItem(`mem_${tripId}`, JSON.stringify(data));
+const plantToLocalCache = (table: string, tripId: string, data: any) => {
+  if (!data || (Array.isArray(data) && data.length === 0)) return; // 禁止空資料種植
+  try {
+    if (table === 'trips') {
+      const tripData = Array.isArray(data) ? data[0] : data;
+      if (tripData) {
+        const savedConfig = localStorage.getItem('trip_config');
+        const currentConfig = savedConfig ? JSON.parse(savedConfig) : {};
+        const newConfig = {
+          ...currentConfig,
+          id: tripId,
+          title: tripData.title || currentConfig.title,
+          dateRange: tripData.date_range || currentConfig.dateRange,
+        };
+        localStorage.setItem('trip_config', JSON.stringify(newConfig));
       }
-    } catch (e) {
-      console.error(`種植表 ${table} 失敗:`, e);
+    } else if (table === 'schedules') {
+      const days = Array.from(new Set(data.map((d: any) => d.day_index)));
+      days.forEach(day => {
+        const dayData = data.filter((item: any) => item.day_index === day);
+        localStorage.setItem(`sched_${tripId}_day${day}`, JSON.stringify(dayData));
+      });
+    } else if (table === 'planning_items') {
+      ['todo', 'packing', 'shopping'].forEach(type => {
+        const typeData = data.filter((item: any) => item.type === type);
+        if (typeData.length > 0) localStorage.setItem(`plan_${tripId}_${type}`, JSON.stringify(typeData));
+      });
+    } else if (table === 'bookings') {
+      localStorage.setItem(`book_${tripId}`, JSON.stringify(data));
+    } else if (table === 'expenses') {
+      localStorage.setItem(`exp_${tripId}`, JSON.stringify(data));
+    } else if (table === 'journals') {
+      localStorage.setItem(`jrnl_${tripId}`, JSON.stringify(data));
+    } else if (table === 'members') {
+      localStorage.setItem(`mem_${tripId}`, JSON.stringify(data));
     }
-  };
-
-  /**
-   * 切換行程：從雲端下載目標 ID 的全量資料並種植到手機本地
-   */
-  const handleSwitchAndSync = async () => {
-    if (!targetId || targetId.length < 5) return alert('請輸入有效的行程 ID');
-    if (!supabase) return alert('雲端未連線，無法同步');
-    
-    setCloning(true);
-    setCloneStep('正在與雲端伺服器建立連結...');
-    
-    try {
-      const tables = ['schedules', 'bookings', 'planning_items', 'expenses', 'journals', 'members'];
-      
-      // 逐表抓取並「種植」
-      for (const table of tables) {
-        setCloneStep(`正在種植本地緩存: ${table}...`);
-        const { data, error } = await supabase.from(table).select('*').eq('trip_id', targetId);
-        if (!error && data) {
-          preheatLocalCache(table, targetId, data);
-        }
-      }
-
-      // 配置種植：更新全域行程 ID
-      const newConfig = { 
-        ...DEFAULT_CONFIG, 
-        id: targetId, 
-        title: "已同步的行程" 
-      };
-      
-      localStorage.setItem('trip_config', JSON.stringify(newConfig));
-      alert('✨ 種植完成！所有行程資料已同步至您的手機，現在可以開始離線使用了。');
-      window.location.reload();
-    } catch (err) {
-      console.error(err);
-      alert('同步失敗，請檢查網路。');
-    } finally {
-      setCloning(false);
-    }
-  };
-
-  /**
-   * 深度克隆：在雲端建立新 ID 資料的同時，同步種植到本地
-   */
-  const performDeepClone = async (sourceId: string, customTitle?: string) => {
-    if (!supabase) return alert('雲端未連線');
-    setCloning(true);
-    
-    const newId = `trip-${Math.random().toString(36).substr(2, 9)}`;
-    const tables = ['schedules', 'bookings', 'planning_items', 'expenses', 'journals', 'members'];
-    
-    try {
-      for (const table of tables) {
-        setCloneStep(`讀取模版資料: ${table}...`);
-        const { data, error } = await supabase.from(table).select('*').eq('trip_id', sourceId);
-        if (error) throw error;
-        
-        if (data && data.length > 0) {
-          setCloneStep(`轉換並種植新副本: ${table}...`);
-          
-          // ID 映射 (針對清單父子項目)
-          const idMap = new Map();
-          const newData = data.map(item => {
-            const oldId = item.id;
-            const newRecordId = `${table.slice(0,2)}-${Math.random().toString(36).substr(2, 9)}`;
-            idMap.set(oldId, newRecordId);
-            
-            const { id, ...rest } = item;
-            return {
-              ...rest,
-              id: newRecordId,
-              trip_id: newId,
-              created_at: new Date().toISOString()
-            };
-          });
-
-          const finalData = table === 'planning_items' 
-            ? newData.map(item => ({
-                ...item,
-                parent_id: item.parent_id ? (idMap.get(item.parent_id) || null) : null
-              }))
-            : newData;
-          
-          // 同步執行：雲端 insert + 本地種植
-          await supabase.from(table).insert(finalData);
-          preheatLocalCache(table, newId, finalData);
-        }
-      }
-
-      const newConfig = { 
-        ...formData, 
-        id: newId, 
-        title: customTitle || `${formData.title} (副本)` 
-      };
-      
-      localStorage.setItem('trip_config', JSON.stringify(newConfig));
-      alert(`🎉 副本已種植成功！\n全新專屬 ID: ${newId}\n您可以將此 ID 分享給其他隊友共同編輯。`);
-      window.location.reload();
-    } catch (err) {
-      console.error(err);
-      alert('克隆種植失敗。');
-    } finally {
-      setCloning(false);
-      setCloneStep('');
-    }
-  };
-
-  return !isOpen ? null : (
-    <div className="fixed inset-0 z-[200] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center animate-in fade-in">
-      <div className="bg-white w-full max-w-md rounded-t-[4rem] sm:rounded-[3.5rem] p-10 shadow-2xl space-y-8 max-h-[90vh] overflow-y-auto relative border-t-8 border-journey-green">
-        {cloning && (
-          <div className="absolute inset-0 z-[300] bg-white/95 backdrop-blur-md flex flex-col items-center justify-center space-y-6">
-             <div className="relative">
-               <div className="animate-spin text-journey-green"><RefreshCw size={64} /></div>
-               <Plane className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-journey-green/20" size={24} />
-             </div>
-             <div className="text-center px-10">
-               <p className="font-black text-journey-brown text-xl mb-1">正在全量種植資料中...</p>
-               <p className="text-sm font-bold text-journey-brown/40 animate-pulse">{cloneStep}</p>
-             </div>
-          </div>
-        )}
-        
-        <div className="flex justify-between items-start">
-          <div>
-            <h3 className="text-2xl font-black text-journey-brown italic uppercase tracking-tighter">行程同步與備份</h3>
-            <div className="flex items-center gap-2 mt-1">
-               {isOnline ? <Wifi size={12} className="text-journey-green"/> : <WifiOff size={12} className="text-journey-red"/>}
-               <span className={`text-[10px] font-black uppercase ${isOnline ? 'text-journey-green' : 'text-journey-red'}`}>
-                 {isOnline ? 'Cloud Sync Enabled' : 'Offline Mode'}
-               </span>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 bg-journey-cream rounded-full text-journey-brown/20"><X size={20} /></button>
-        </div>
-        
-        <div className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-journey-brown/30 ml-3 uppercase tracking-widest">目前行程名稱</label>
-            <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black focus:outline-none border-4 border-transparent focus:border-journey-green/20 shadow-inner" />
-          </div>
-
-          <div className="p-6 bg-journey-accent/10 rounded-[2.5rem] border-4 border-journey-accent/20 space-y-4">
-              <div className="flex items-center gap-2 text-journey-brown">
-                <Download size={18} className="text-journey-brown/40" />
-                <p className="text-[10px] font-black uppercase tracking-widest">匯入行程 ID</p>
-              </div>
-              <input 
-                placeholder="在此貼上模版 ID..." 
-                value={targetId} 
-                onChange={e => setTargetId(e.target.value)} 
-                className="w-full bg-white p-4 rounded-2xl text-xs font-black focus:outline-none border-2 border-journey-accent/10 focus:border-journey-accent/40" 
-              />
-              <div className="grid grid-cols-2 gap-2">
-                  <button onClick={handleSwitchAndSync} className="py-4 bg-white border-2 border-journey-accent text-journey-brown rounded-2xl font-black text-[10px] uppercase tracking-tighter active:scale-95 shadow-soft-sm">僅切換查看</button>
-                  <button onClick={() => {
-                    if (!targetId) return alert('請輸入模版 ID');
-                    if (confirm(`確定要將此行程種植到您的手機並建立專屬副本嗎？`)) {
-                      performDeepClone(targetId, "匯入的夢幻行程");
-                    }
-                  }} className="py-4 bg-journey-accent text-journey-brown rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-soft-sm active:scale-95">建立我的副本</button>
-              </div>
-          </div>
-
-          <div className="p-6 bg-journey-blue/5 rounded-[2.5rem] border-4 border-journey-blue/10 space-y-4">
-            <h4 className="text-xs font-black text-journey-blue flex items-center gap-2 uppercase tracking-wider"><Share2 size={16}/> 分享我的行程</h4>
-            <div className="flex gap-2 bg-white p-2 rounded-2xl border-2 border-journey-blue/5">
-                <input readOnly value={config.id} className="flex-grow bg-transparent px-3 py-2 font-mono text-xs font-black text-journey-blue focus:outline-none" />
-                <button onClick={() => { navigator.clipboard.writeText(config.id); alert('ID 已複製！'); }} className="p-3 bg-journey-blue text-white rounded-xl active:scale-90 transition-transform"><Copy size={16}/></button>
-            </div>
-            <button 
-              onClick={() => performDeepClone(config.id)}
-              disabled={cloning}
-              className="w-full bg-white border-2 border-journey-blue/30 text-journey-blue py-3 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all"
-            >
-              <MousePointer2 size={12} /> 將目前行程存為新備份
-            </button>
-          </div>
-        </div>
-
-        <button onClick={() => { onSave(formData); onClose(); }} className="w-full bg-journey-brown text-white font-black py-6 rounded-[2.5rem] shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
-          <Save size={22} />
-          <span className="text-lg">儲存並返回</span>
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const Header = ({ tripConfig, onOpenSettings }: { tripConfig: any, onOpenSettings: () => void }) => {
-  return (
-    <header className="px-6 pt-12 pb-8 flex justify-between items-start relative z-10">
-      <div className="space-y-1">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 bg-journey-green rounded-[1.5rem] flex items-center justify-center text-white shadow-soft -rotate-6 transition-transform hover:rotate-0 border-4 border-white">
-            <Plane size={28} strokeWidth={2.5} />
-          </div>
-          <div>
-            <h1 className="text-3xl font-black text-journey-brown italic tracking-tighter leading-none mb-1">{tripConfig.title}</h1>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-journey-green rounded-full animate-pulse"></div>
-              <p className="text-[10px] font-black text-journey-brown/40 uppercase tracking-[0.2em]">{tripConfig.dateRange}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <button 
-        onClick={onOpenSettings}
-        className="w-14 h-14 bg-white/80 backdrop-blur-md rounded-[1.5rem] shadow-soft flex items-center justify-center text-journey-brown/30 hover:text-journey-brown transition-all active:scale-90 border-4 border-white group"
-      >
-        <Settings2 size={26} className="group-hover:rotate-45 transition-transform" />
-      </button>
-    </header>
-  );
-};
-
-const LoadingScreen = () => {
-  return (
-    <div className="h-screen w-screen flex flex-col items-center justify-center bg-sky-400 overflow-hidden relative">
-      <div className="absolute top-1/4 left-1/4 animate-float opacity-80"><Cloud className="text-white" size={48} fill="white" /></div>
-      <div className="absolute top-1/3 right-1/4 animate-bounce-slow opacity-60 scale-75" style={{ animationDelay: '1s' }}><Cloud className="text-white" size={60} fill="white" /></div>
-      <div className="absolute bottom-1/4 left-1/3 animate-float opacity-70 scale-50" style={{ animationDelay: '2s' }}><Cloud className="text-white" size={40} fill="white" /></div>
-      <div className="absolute top-1/2 right-10 animate-bounce-slow opacity-40 scale-90" style={{ animationDelay: '0.5s' }}><Cloud className="text-white" size={50} fill="white" /></div>
-
-      <div className="relative z-10 flex flex-col items-center">
-        <div className="bg-white/20 p-10 rounded-full backdrop-blur-md animate-pulse mb-8 border-4 border-white/10">
-           <div className="animate-float">
-             <Plane className="text-white rotate-45 drop-shadow-xl" size={100} fill="white" />
-           </div>
-        </div>
-        
-        <div className="flex gap-1.5">
-          {"快樂旅程準備中。。。".split("").map((char, i) => (
-            <span 
-              key={i} 
-              className="text-white text-2xl font-black italic drop-shadow-lg animate-bounce-slow inline-block"
-              style={{ animationDelay: `${i * 0.1}s` }}
-            >
-              {char}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="absolute bottom-16 flex flex-col items-center gap-4 opacity-40">
-         <div className="flex gap-4">
-           <div className="h-1.5 w-24 bg-white rounded-full animate-pulse"></div>
-           <div className="h-1.5 w-10 bg-white rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
-           <div className="h-1.5 w-16 bg-white rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
-         </div>
-         <p className="text-[10px] text-white font-black uppercase tracking-[0.3em]">Tabi-Kuma Flight 2025</p>
-      </div>
-    </div>
-  );
+  } catch (e) {
+    console.error(`種植 ${table} 失敗:`, e);
+  }
 };
 
 const AppContent = () => {
@@ -338,20 +80,46 @@ const AppContent = () => {
   
   const location = useLocation();
   const currentBg = BACKGROUND_COLORS[location.pathname] || '#FDFBF7';
+  const hasSyncRef = useRef(false);
 
   useEffect(() => {
     document.body.style.backgroundColor = currentBg;
+  }, [currentBg]);
+
+  useEffect(() => {
+    // 儲存設定到本地
     localStorage.setItem('trip_config', JSON.stringify(tripConfig));
-    initSupabaseAuth().then(() => {
-      setTimeout(() => setInitializing(false), 2000);
-    });
-  }, [tripConfig, currentBg]);
+    
+    // 初始化連線與資料種植
+    const initApp = async () => {
+      await initSupabaseAuth();
+      if (!hasSyncRef.current && supabase && tripConfig.id) {
+        const tables = ['trips', 'schedules', 'bookings', 'planning_items', 'expenses', 'journals', 'members'];
+        for (const table of tables) {
+          try {
+            const { data } = await supabase.from(table).select('*').eq(table === 'trips' ? 'id' : 'trip_id', tripConfig.id);
+            if (data && data.length > 0) plantToLocalCache(table, tripConfig.id, data);
+          } catch (e) {}
+        }
+        hasSyncRef.current = true;
+      }
+      setInitializing(false);
+    };
+    initApp();
+  }, [tripConfig.id]);
 
   if (initializing) return <LoadingScreen />;
 
   return (
     <div className="min-h-screen pb-32">
-      <Header tripConfig={tripConfig} onOpenSettings={() => setShowSettings(true)} />
+      <header className="px-6 pt-12 pb-8 flex justify-between items-start relative z-10">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 bg-journey-green rounded-[1.5rem] flex items-center justify-center text-white shadow-soft -rotate-6 border-4 border-white transition-transform hover:rotate-0"><Plane size={28} /></div>
+          <div><h1 className="text-3xl font-black text-journey-brown italic tracking-tighter leading-none mb-1">{tripConfig.title}</h1><p className="text-[10px] font-black text-journey-brown/40 uppercase tracking-[0.2em]">{tripConfig.dateRange}</p></div>
+        </div>
+        <button onClick={() => setShowSettings(true)} className="w-14 h-14 bg-white/80 backdrop-blur-md rounded-[1.5rem] shadow-soft flex items-center justify-center text-journey-brown/30 hover:text-journey-brown active:scale-90 border-4 border-white transition-all"><Settings2 size={26} /></button>
+      </header>
+
       <main className="px-6 relative z-0">
         <Routes>
           <Route path="/schedule" element={<ScheduleView tripConfig={tripConfig} />} />
@@ -363,19 +131,66 @@ const AppContent = () => {
           <Route path="*" element={<Navigate to="/schedule" replace />} />
         </Routes>
       </main>
-      <TripSettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} config={tripConfig} onSave={(cfg) => setTripConfig(cfg)} />
+
+      <TripSettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} config={tripConfig} onSave={setTripConfig} />
       
       <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[350px] bg-white/90 backdrop-blur-2xl px-2 py-3 z-50 rounded-[3rem] shadow-2xl border-4 border-white flex justify-around items-center">
         {NAV_ITEMS.map((item) => {
           const isActive = location.pathname.includes(item.id);
           return (
-            <button key={item.id} onClick={() => window.location.hash = `#/${item.id}`} className={`relative w-12 h-12 rounded-[1.8rem] flex flex-col items-center justify-center transition-all duration-300 ${isActive ? 'bg-journey-green text-white shadow-lg -translate-y-2 rotate-3' : 'text-journey-brown/20 hover:text-journey-brown/40'}`}>
+            <button key={item.id} onClick={() => window.location.hash = `#/${item.id}`} className={`relative w-12 h-12 rounded-[1.8rem] flex flex-col items-center justify-center transition-all duration-300 ${isActive ? 'bg-journey-green text-white shadow-lg -translate-y-2 rotate-3 scale-110' : 'text-journey-brown/20 hover:text-journey-brown/40'}`}>
               {item.icon}
-              {isActive && <div className="absolute -bottom-1 w-1.5 h-1.5 bg-white rounded-full animate-pulse"></div>}
             </button>
           );
         })}
       </nav>
+    </div>
+  );
+};
+
+const LoadingScreen = () => (
+  <div className="h-screen w-screen flex flex-col items-center justify-center bg-sky-400 overflow-hidden relative text-white">
+    <div className="relative z-10 flex flex-col items-center">
+      <div className="bg-white/20 p-10 rounded-full backdrop-blur-md animate-pulse mb-8 border-4 border-white/10"><Plane className="rotate-45" size={100} fill="white" /></div>
+      <p className="text-2xl font-black italic animate-bounce-slow px-10 text-center">正在同步您的夢幻旅程...</p>
+    </div>
+  </div>
+);
+
+const TripSettingsModal = ({ isOpen, onClose, config, onSave }: any) => {
+  const [formData, setFormData] = useState(config);
+  const [targetId, setTargetId] = useState('');
+  const [isCloning, setIsCloning] = useState(false);
+
+  const handleSyncAll = async (id: string) => {
+    if (!supabase) return;
+    setIsCloning(true);
+    const tables = ['trips', 'schedules', 'bookings', 'planning_items', 'expenses', 'journals', 'members'];
+    for (const table of tables) {
+      const { data } = await supabase.from(table).select('*').eq(table === 'trips' ? 'id' : 'trip_id', id);
+      if (data && data.length > 0) plantToLocalCache(table, id, data);
+    }
+    window.location.reload();
+  };
+
+  return !isOpen ? null : (
+    <div className="fixed inset-0 z-[200] bg-journey-brown/60 backdrop-blur-md flex items-end sm:items-center justify-center p-4">
+      <div className="bg-white w-full max-w-md rounded-[3rem] p-10 shadow-2xl space-y-6 relative border-t-8 border-journey-green">
+        <div className="flex justify-between items-center"><h3 className="text-2xl font-black text-journey-brown italic uppercase tracking-tighter">設定與同步</h3><button onClick={onClose}><X size={24} className="text-journey-brown/20" /></button></div>
+        <div className="space-y-4">
+          <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-4 rounded-2xl font-black focus:outline-none" placeholder="行程標題" />
+          <div className="p-4 bg-journey-blue/5 rounded-2xl space-y-3">
+             <p className="text-[10px] font-black uppercase text-journey-blue">載入雲端行程 ID</p>
+             <input value={targetId} onChange={e => setTargetId(e.target.value)} className="w-full bg-white p-3 rounded-xl text-xs font-black focus:outline-none" />
+             <button onClick={() => handleSyncAll(targetId)} className="w-full bg-journey-blue text-white py-3 rounded-xl font-black text-xs active:scale-95">下載資料</button>
+          </div>
+          <div className="p-4 bg-journey-cream rounded-2xl flex justify-between items-center">
+            <div><p className="text-[10px] font-black uppercase opacity-20">我的行程 ID</p><p className="font-mono text-xs font-black">{config.id}</p></div>
+            <button onClick={() => { navigator.clipboard.writeText(config.id); alert('ID 已複製'); }} className="p-2 bg-white rounded-lg shadow-sm"><Copy size={16}/></button>
+          </div>
+        </div>
+        <button onClick={() => { onSave(formData); onClose(); }} className="w-full bg-journey-brown text-white py-5 rounded-[2rem] font-black active:scale-95">儲存變更</button>
+      </div>
     </div>
   );
 };
