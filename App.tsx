@@ -19,23 +19,21 @@ const DEFAULT_CONFIG = {
 };
 
 /**
- * 原子鏡像寫入 v5.9：確保雲端資料與本地 LocalStorage 絕對同步
+ * 原子鏡像寫入 v6.0：深度清理並精確重建 LocalStorage
  */
-const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTableKey: string) => {
+const atomicMirrorWrite = (tripId: string, allData: Record<string, any>) => {
   try {
-    const tripInfo = allData[tripTableKey]?.[0];
-    if (!tripInfo) return false;
+    const tripInfo = allData.trips?.[0];
+    if (!tripInfo) throw new Error("無主行程資料");
 
-    // 1. 徹底清理所有與當前 tripId 或 ID 命名相關的舊資料，避免污染
+    // 1. 安全清理：先獲取所有鍵名，避免迭代中刪除導致的漏刪
     const prefixes = ['sched_', 'plan_', 'book_', 'exp_', 'jrnl_', 'mem_', 'last_day_', 'plan_last_tab_'];
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && (k.includes(tripId) || prefixes.some(p => k.startsWith(p)))) {
-        keysToRemove.push(k);
+    const allKeys = Object.keys(localStorage);
+    allKeys.forEach(k => {
+      if (k.includes(tripId) || prefixes.some(p => k.startsWith(p))) {
+        localStorage.removeItem(k);
       }
-    }
-    keysToRemove.forEach(k => localStorage.removeItem(k));
+    });
 
     // 2. 寫入主行程配置
     localStorage.setItem('trip_config', JSON.stringify({
@@ -45,8 +43,8 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
       userAvatar: DEFAULT_CONFIG.userAvatar
     }));
 
-    // 3. 恢復行程 (Schedules) - 按 day_index 分組
-    if (allData.schedules && Array.isArray(allData.schedules)) {
+    // 3. 恢復行程 (Schedules)：依據 day_index 分組存入對應的 Day 鍵值
+    if (Array.isArray(allData.schedules)) {
       const groups: Record<number, any[]> = {};
       allData.schedules.forEach((s: any) => {
         const d = s.day_index ?? 0;
@@ -58,17 +56,16 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
       });
     }
 
-    // 4. 恢復準備清單 (Planning) - 按 type 分組
-    if (allData.planning_items && Array.isArray(allData.planning_items)) {
-      const pTypes = ['todo', 'packing', 'shopping'];
-      pTypes.forEach(type => {
+    // 4. 恢復準備清單 (Planning)：依據 type 分撥至 todo, packing, shopping
+    if (Array.isArray(allData.planning_items)) {
+      ['todo', 'packing', 'shopping'].forEach(type => {
         const filtered = allData.planning_items.filter((p: any) => p.type === type);
         localStorage.setItem(`plan_${tripId}_${type}`, JSON.stringify(filtered));
       });
       localStorage.setItem(`plan_last_tab_${tripId}`, 'todo');
     }
 
-    // 5. 恢復其他分頁
+    // 5. 恢復其他分頁：預訂、支出、日誌、成員
     const mapping: Record<string, string> = {
       'bookings': `book_${tripId}`,
       'expenses': `exp_${tripId}`,
@@ -83,10 +80,10 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
       }
     });
 
-    localStorage.setItem(`last_sync_ts_${tripId}`, new Date().toISOString());
+    localStorage.setItem(`mirror_sync_at`, new Date().toISOString());
     return true;
   } catch (e) {
-    console.error("Atomic Sync Error:", e);
+    console.error("Critical Sync Error:", e);
     return false;
   }
 };
@@ -101,10 +98,10 @@ const AutoSyncHandler = () => {
   const [progress, setProgress] = useState(0);
 
   const startSync = async () => {
-    if (!id) { setErrorMessage("克隆連結無效"); setStatus('error'); return; }
+    if (!id) { setErrorMessage("連結遺失行程 ID"); setStatus('error'); return; }
     setStatus('syncing'); setProgress(5);
     try {
-      if (!supabase) throw new Error("資料庫連線中斷");
+      if (!supabase) throw new Error("雲端資料庫未就緒");
       
       const tables = ['trips', 'schedules', 'bookings', 'expenses', 'planning_items', 'members', 'journals'];
       const bundle: Record<string, any> = {};
@@ -112,23 +109,21 @@ const AutoSyncHandler = () => {
       for (let i = 0; i < tables.length; i++) {
         const t = tables[i];
         const { data, error } = await supabase.from(t).select('*').eq(t === 'trips' ? 'id' : 'trip_id', id);
-        if (error) throw new Error(`讀取 ${t} 失敗: ${error.message}`);
+        if (error) throw new Error(`讀取 ${t} 失敗`);
         bundle[t] = data || [];
         setProgress(Math.round(5 + ((i + 1) / tables.length) * 95));
       }
 
-      if (!bundle.trips || bundle.trips.length === 0) {
-        throw new Error("雲端找不到此行程。請確保電腦端已點擊「強力推送所有頁面資料」。");
-      }
+      if (!bundle.trips?.length) throw new Error("找不到行程！請確認電腦端已執行「強力推送」。");
       
-      if (atomicMirrorWrite(id, bundle, 'trips')) {
+      if (atomicMirrorWrite(id, bundle)) {
         setStatus('success');
         setTimeout(() => { 
           window.location.replace(window.location.origin + window.location.pathname + "#/schedule"); 
           window.location.reload(); 
         }, 1500);
       } else {
-        throw new Error("資料寫入本地時發生異常");
+        throw new Error("同步寫入失敗");
       }
     } catch (e: any) { 
       setErrorMessage(e.message); 
@@ -142,19 +137,19 @@ const AutoSyncHandler = () => {
         <div className="w-20 h-20 bg-journey-green/10 rounded-3xl flex items-center justify-center text-journey-green mx-auto mb-6">
           <Download size={40} className={status === 'syncing' ? 'animate-bounce' : ''}/>
         </div>
-        <h2 className="text-2xl font-black italic text-journey-brown mb-2">克隆同步 v5.9</h2>
+        <h2 className="text-2xl font-black italic text-journey-brown mb-2">全量同步 v6.0</h2>
         {status === 'check' && (
           <div className="space-y-6">
-            <p className="text-[11px] font-black opacity-40 italic leading-relaxed">即將下載所有頁面資料：<br/>機票、行程、支出、清單、日誌...</p>
-            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all">開始全量搬運</button>
+            <p className="text-[11px] font-black opacity-40 italic leading-relaxed">即將下載：行程、標題、清單、機票、<br/>支出、成員、照片與日誌內容。</p>
+            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all">開始鏡像克隆</button>
           </div>
         )}
-        {status === 'syncing' && <p className="text-sm font-black italic animate-pulse">同步中... {progress}%</p>}
-        {status === 'success' && <p className="text-lg font-black text-journey-green animate-bounce">同步完成 ✨</p>}
+        {status === 'syncing' && <p className="text-sm font-black italic animate-pulse">正在搬運中... {progress}%</p>}
+        {status === 'success' && <p className="text-lg font-black text-journey-green animate-bounce">同步大成功 ✨</p>}
         {status === 'error' && (
           <div className="space-y-4">
             <div className="bg-journey-red/5 p-4 rounded-2xl text-[10px] font-black text-journey-red leading-relaxed">{errorMessage}</div>
-            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-4 rounded-3xl font-black">重新同步</button>
+            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-4 rounded-3xl font-black">重新嘗試</button>
           </div>
         )}
       </div>
@@ -195,8 +190,8 @@ const AppContent = () => {
     <div className="min-h-screen pb-44 flex flex-col">
       {dbReady === false && !location.pathname.includes('/sync') && (
         <div className="fixed top-0 left-0 w-full bg-journey-red text-white pt-12 pb-3 px-6 z-[2000] text-[10px] font-black uppercase flex justify-between items-center shadow-xl">
-           <span>資料庫未就緒</span>
-           <button onClick={() => setShowSettings(true)} className="underline">查看教學</button>
+           <span>資料庫未連線</span>
+           <button onClick={() => setShowSettings(true)} className="underline">檢查設定</button>
         </div>
       )}
 
@@ -247,7 +242,7 @@ const AppContent = () => {
 const LoadingScreen = () => (
   <div className="h-screen w-screen flex flex-col items-center justify-center bg-journey-cream text-journey-brown p-10">
     <div className="w-24 h-24 bg-journey-green rounded-[2.5rem] flex items-center justify-center shadow-xl animate-bounce-slow"><Plane size={48} className="text-white"/></div>
-    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v5.9...</p>
+    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v6.0...</p>
   </div>
 );
 
@@ -255,58 +250,56 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
   const [formData, setFormData] = useState(config);
   const [pushing, setPushing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
 
   const dates = config.dateRange.split(' ~ ');
   const [startDate, setStartDate] = useState(dates[0] || '2025-01-01');
   const [endDate, setEndDate] = useState(dates[1] || '2025-01-07');
 
   const handleForcePush = async () => {
-    if (!supabase || dbReady === false) return alert("資料庫尚未就緒，請檢查連線。");
+    if (!supabase || dbReady === false) return alert("資料庫未連線");
     setPushing(true);
+    setLog(["開始全量同步..."]);
     const finalDateRange = `${startDate} ~ ${endDate}`;
     const finalConfig = { ...formData, id: config.id, dateRange: finalDateRange };
     
     try {
       // 1. 推送主表
-      const { error: tripErr } = await supabase.from('trips').upsert({ 
-        id: config.id, 
-        title: formData.title, 
-        date_range: finalDateRange 
-      });
+      setLog(prev => [...prev, "📤 上傳主行程配置..."]);
+      const { error: tripErr } = await supabase.from('trips').upsert({ id: config.id, title: formData.title, date_range: finalDateRange });
       if (tripErr) throw tripErr;
 
-      // 2. 推送行程細節
-      const schedulePromises = [];
+      // 2. 推送行程細節 (Day 0~31)
+      setLog(prev => [...prev, "📤 上傳每日行程..."]);
       for (let d = 0; d < 32; d++) {
         const data = localStorage.getItem(`sched_${config.id}_day${d}`);
         if (data) {
           const parsed = JSON.parse(data).map((item: any) => ({ ...item, trip_id: config.id, day_index: d }));
-          if (parsed.length > 0) schedulePromises.push(supabase.from('schedules').upsert(parsed));
+          if (parsed.length > 0) await supabase.from('schedules').upsert(parsed);
         }
       }
-      await Promise.all(schedulePromises);
 
-      // 3. 推送準備清單
-      const planPromises = [];
+      // 3. 推送準備清單 (Todo/Packing/Shopping)
+      setLog(prev => [...prev, "📤 上傳準備清單..."]);
       const planTypes = ['todo', 'packing', 'shopping'] as const;
       for (const pt of planTypes) {
         const data = localStorage.getItem(`plan_${config.id}_${pt}`);
         if (data) {
           const parsed = JSON.parse(data).map((item: any) => ({ ...item, trip_id: config.id, type: pt }));
-          if (parsed.length > 0) planPromises.push(supabase.from('planning_items').upsert(parsed));
+          if (parsed.length > 0) await supabase.from('planning_items').upsert(parsed);
         }
       }
-      await Promise.all(planPromises);
 
-      // 4. 推送其他標準分頁
+      // 4. 推送其餘分頁
       const others = [
-        { t: 'bookings', k: `book_${config.id}` },
-        { t: 'expenses', k: `exp_${config.id}` },
-        { t: 'journals', k: `jrnl_${config.id}` },
-        { t: 'members', k: `mem_${config.id}` }
+        { t: 'bookings', k: `book_${config.id}`, n: "機票預訂" },
+        { t: 'expenses', k: `exp_${config.id}`, n: "記帳支出" },
+        { t: 'journals', k: `jrnl_${config.id}`, n: "照片日誌" },
+        { t: 'members', k: `mem_${config.id}`, n: "成員名單" }
       ];
 
       for (const o of others) {
+        setLog(prev => [...prev, `📤 上傳${o.n}...`]);
         const data = localStorage.getItem(o.k);
         if (data) {
           const parsed = JSON.parse(data).map((row: any) => ({ ...row, trip_id: config.id }));
@@ -314,11 +307,12 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
         }
       }
 
-      alert("✅ 全量推送成功！\n機票、記帳、成員、清單、行程、日誌已全部上傳至雲端。");
+      setLog(prev => [...prev, "✅ 所有頁面同步大成功！"]);
+      alert("✅ 終極全量同步成功！\n\n您的所有頁面資料（包含照片）已安全上傳至雲端。手機端點擊連結即可同步。");
       onSave(finalConfig);
     } catch (e: any) { 
-      console.error("Force push error:", e);
-      alert("推送失敗: " + (e.message || "未知錯誤")); 
+      setLog(prev => [...prev, "❌ 同步中斷: " + e.message]);
+      alert("同步失敗: " + (e.message || "未知錯誤")); 
     } finally { 
       setPushing(false); 
     }
@@ -333,18 +327,22 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
     <div className="fixed inset-0 z-[6000] bg-journey-brown/80 backdrop-blur-xl flex items-end sm:items-center justify-center animate-in fade-in">
       <div className="bg-white w-full max-w-md rounded-t-[4rem] sm:rounded-[3.5rem] shadow-2xl flex flex-col max-h-[90vh] border-t-8 border-journey-green overflow-hidden">
         <div className="p-10 pb-6 flex justify-between items-center bg-white">
-          <h3 className="text-2xl font-black italic text-journey-brown">旅程設定</h3>
+          <h3 className="text-2xl font-black italic text-journey-brown">旅程設定 v6.0</h3>
           <button onClick={onClose} className="p-2 bg-journey-cream rounded-full text-journey-brown/30"><X size={20}/></button>
         </div>
 
         <div className="flex-grow overflow-y-auto px-10 pb-10 space-y-6">
           <div className="p-6 bg-journey-green/10 rounded-[2.5rem] border-4 border-white shadow-soft-sm space-y-4">
-            <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">資料克隆 v5.9</p>
+            <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">全量鏡像同步</p>
             <button onClick={handleForcePush} disabled={pushing} className="w-full py-5 rounded-2xl bg-white text-journey-green font-black shadow-sm flex items-center justify-center gap-3 active:scale-95 transition-all">
               {pushing ? <Loader2 className="animate-spin text-journey-green"/> : <CloudUpload className="text-journey-green"/>} 
               強力推送所有頁面資料
             </button>
-            <p className="text-[9px] text-center font-bold opacity-30 italic px-4 leading-relaxed">請確保電腦端完成推送後，再使用手機端連結。這將同步包括所有分頁的所有細節。</p>
+            {log.length > 0 && (
+              <div className="bg-white/50 p-4 rounded-xl text-[9px] font-mono text-journey-brown/60 space-y-1">
+                {log.slice(-3).map((l, i) => <div key={i}>{l}</div>)}
+              </div>
+            )}
           </div>
 
           <div className="space-y-4 pt-2">
@@ -371,7 +369,7 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
         </div>
 
         <div className="p-10 pt-4 pb-16 sm:pb-10 bg-white border-t border-journey-cream">
-           <button onClick={handleForcePush} className="w-full bg-journey-brown text-white py-6 rounded-[2.5rem] font-black shadow-2xl active:scale-95 transition-all">儲存並同步</button>
+           <button onClick={handleForcePush} className="w-full bg-journey-brown text-white py-6 rounded-[2.5rem] font-black shadow-2xl active:scale-95 transition-all">儲存並全量同步</button>
         </div>
       </div>
     </div>
