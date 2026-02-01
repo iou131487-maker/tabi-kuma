@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
 import { initSupabaseAuth, supabase } from './supabase'; 
-import { Settings2, Save, X, Plane, Copy, Loader2, Share2, Cloud, RefreshCw, Download, CheckCircle2, AlertCircle, Info, Link as LinkIcon, Calendar, ArrowRight, ShieldCheck, Wifi, Database, Search, Smartphone } from 'lucide-react';
+import { Settings2, Save, X, Plane, Copy, Loader2, Share2, Cloud, RefreshCw, Download, CheckCircle2, AlertCircle, Info, Link as LinkIcon, Calendar, ArrowRight, ShieldCheck, Wifi, Database, Search, Smartphone, Layers } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -28,15 +28,13 @@ const BACKGROUND_COLORS: Record<string, string> = {
 };
 
 /**
- * Mirror Protocol v4.5: 究極原子寫入
- * 確保在資料完全準備好之前，不變動任何現有存儲。
+ * Mirror Protocol v4.6: 原子寫入機制
  */
-const atomicMirrorWriteV45 = (tripId: string, allData: Record<string, any>) => {
+const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTableKey: string) => {
   try {
-    const tripInfo = allData.trips?.[0];
+    const tripInfo = allData[tripTableKey]?.[0];
     if (!tripInfo) return false;
 
-    // 1. 建立內存快照
     const snapshot: Record<string, string> = {
       'trip_config': JSON.stringify({
         id: tripId,
@@ -69,58 +67,37 @@ const atomicMirrorWriteV45 = (tripId: string, allData: Record<string, any>) => {
     if (allData.journals) snapshot[`jrnl_${tripId}`] = JSON.stringify(allData.journals);
     if (allData.members) snapshot[`mem_${tripId}`] = JSON.stringify(allData.members);
 
-    // 2. 只有在快照完整的情況下，才執行清空並瞬間寫入
-    // 使用 try-catch 包裹 localStorage 操作以防空間不足
     localStorage.clear();
     Object.entries(snapshot).forEach(([k, v]) => localStorage.setItem(k, v));
     localStorage.setItem(`last_mirror_sync_${tripId}`, new Date().toISOString());
 
     return true;
   } catch (e) {
-    console.error("Mirror Protocol Critical Write Failure:", e);
+    console.error("Mirror Write Failure:", e);
     return false;
   }
 };
 
 /**
- * 自動鏡像處理器 (手機端)
- * 解決 App 內置瀏覽器 URL 損壞問題
+ * 自動鏡像處理器 (手機端) - 具備 Schema 自動適應功能
  */
 const AutoSyncHandler = () => {
   const params = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   
-  // 強化版解析邏輯：從 params, search, 甚至是全網址字串抓取符合格式的 ID
-  const findId = () => {
-    // 1. 標準 Params
+  const findIdFromAnywhere = () => {
     if (params.id && params.id.length >= 8) return params.id.trim();
-    
-    // 2. Search Params (處理某些 App 把 Hash 轉成 Query 的情況)
     const searchId = new URLSearchParams(location.search).get('id') || new URLSearchParams(location.search).get('sync');
     if (searchId) return searchId.trim();
-
-    // 3. 全網址正則掃描 (暴力破解被 App 弄髒的網址)
     const urlMatches = window.location.href.match(/trip-[a-z0-9]+/i);
-    if (urlMatches) return urlMatches[0];
-
-    return '';
+    return urlMatches ? urlMatches[0] : '';
   };
 
-  const [id, setId] = useState(findId());
+  const [id, setId] = useState(findIdFromAnywhere());
   const [status, setStatus] = useState<'check' | 'syncing' | 'success' | 'error'>('check');
   const [errorMessage, setErrorMessage] = useState('');
   const [progress, setProgress] = useState(0);
-
-  const diagTables = [
-    { key: 'health', label: '連線診斷' },
-    { key: 'trips', label: '行程核心' },
-    { key: 'schedules', label: '每日計畫' },
-    { key: 'bookings', label: '預訂資料' },
-    { key: 'expenses', label: '財務對帳' },
-    { key: 'planning_items', label: '清單清點' },
-    { key: 'members', label: '成員權限' }
-  ];
 
   const startSync = async (targetId: string = id) => {
     const cleanId = targetId.trim();
@@ -132,52 +109,67 @@ const AutoSyncHandler = () => {
 
     setStatus('syncing');
     setErrorMessage('');
-    setProgress(0);
+    setProgress(5);
 
     try {
       if (!supabase) throw new Error("資料庫模組未載入");
       
+      // 1. Schema 探測：嘗試找出正確的 Trip 表名 (trips 或 trip)
+      let tripTableKey = 'trips';
+      const { error: pluralError } = await supabase.from('trips').select('id').limit(1);
+      
+      if (pluralError && (pluralError.message.includes('not find') || pluralError.code === 'PGRST116')) {
+        const { error: singularError } = await supabase.from('trip').select('id').limit(1);
+        if (!singularError) {
+          tripTableKey = 'trip';
+        } else {
+          throw new Error("找不到資料庫表 'trips' 或 'trip'，請檢查 Supabase 設定。");
+        }
+      }
+      setProgress(20);
+
+      const diagTables = [
+        { key: tripTableKey, label: '行程核心' },
+        { key: 'schedules', label: '每日計畫' },
+        { key: 'bookings', label: '預訂資料' },
+        { key: 'expenses', label: '財務對帳' },
+        { key: 'planning_items', label: '清單清點' },
+        { key: 'members', label: '成員權限' }
+      ];
+
       const bundle: Record<string, any> = {};
       
       for (let i = 0; i < diagTables.length; i++) {
         const table = diagTables[i];
+        const { data, error } = await supabase
+          .from(table.key)
+          .select('*')
+          .eq(table.key === tripTableKey ? 'id' : 'trip_id', cleanId);
         
-        if (table.key === 'health') {
-          // 真正的 Ping 測試
-          const { error } = await supabase.from('trips').select('count', { count: 'exact', head: true }).limit(1);
-          if (error) throw new Error("無法連接雲端，請確認手機網路或關閉 VPN");
-        } else {
-          const { data, error } = await supabase
-            .from(table.key)
-            .select('*')
-            .eq(table.key === 'trips' ? 'id' : 'trip_id', cleanId);
-          
-          if (error) throw new Error(`${table.label} 同步失敗: ${error.message}`);
-          bundle[table.key] = data || [];
-        }
+        if (error) throw new Error(`${table.label} 同步失敗: ${error.message}`);
+        bundle[table.key] = data || [];
         
-        setProgress(Math.round(((i + 1) / diagTables.length) * 100));
-        await new Promise(r => setTimeout(r, 100)); // 讓 UI 有感更新
+        setProgress(Math.round(20 + ((i + 1) / diagTables.length) * 80));
+        await new Promise(r => setTimeout(r, 100));
       }
 
-      if (!bundle.trips || bundle.trips.length === 0) {
-        throw new Error("雲端找不到此 ID，請確保電腦端已按『儲存並推送到雲端』");
+      if (!bundle[tripTableKey] || bundle[tripTableKey].length === 0) {
+        throw new Error("雲端找不到此行程 ID，請確保電腦端已按『儲存並推送』");
       }
 
-      const success = atomicMirrorWriteV45(cleanId, bundle);
+      const success = atomicMirrorWrite(cleanId, bundle, tripTableKey);
       if (success) {
         setStatus('success');
-        // 使用深度重新整理確保 LocalStorage 狀態被 React 抓取
         setTimeout(() => {
           window.location.replace(window.location.origin + window.location.pathname + "#/schedule");
           window.location.reload();
-        }, 1500);
+        }, 1200);
       } else {
-        throw new Error("本地存儲寫入失敗，手機空間可能不足");
+        throw new Error("本地寫入失敗，請確認手機空間是否充足");
       }
     } catch (e: any) {
       console.error("Sync Error:", e);
-      setErrorMessage(e.message || "未知錯誤");
+      setErrorMessage(e.message || "同步發生未知錯誤");
       setStatus('error');
     }
   };
@@ -189,13 +181,13 @@ const AutoSyncHandler = () => {
            <div className="h-full bg-journey-green transition-all duration-500 ease-out" style={{ width: `${progress}%` }} />
         </div>
         
-        <div className="w-20 h-20 bg-journey-green/10 rounded-[2rem] flex items-center justify-center text-journey-green mx-auto mb-6">
-          {status === 'success' ? <CheckCircle2 size={40} className="animate-bounce" /> : <Smartphone size={40} />}
+        <div className="w-20 h-20 bg-journey-green/10 rounded-[2.2rem] flex items-center justify-center text-journey-green mx-auto mb-6">
+          {status === 'success' ? <CheckCircle2 size={40} className="animate-bounce" /> : <Layers size={40} className={status === 'syncing' ? 'animate-pulse' : ''} />}
         </div>
 
-        <h2 className="text-3xl font-black italic text-journey-brown mb-2 tracking-tighter">鏡像同步 v4.5</h2>
+        <h2 className="text-3xl font-black italic text-journey-brown mb-2 tracking-tighter">鏡像同步 v4.6</h2>
         <p className="text-[10px] font-black text-journey-brown/30 uppercase tracking-[0.2em] mb-8">
-           {status === 'syncing' ? '正在鏡像對齊雲端資料...' : '絕對鏡像體驗・絕對同步'}
+           {status === 'syncing' ? '正在對齊雲端 Schema...' : '絕對同步・無損鏡像'}
         </p>
 
         {status === 'check' && (
@@ -203,12 +195,12 @@ const AutoSyncHandler = () => {
             <div className="bg-journey-cream/50 p-6 rounded-[2.5rem] border-2 border-dashed border-journey-brown/10">
                {id ? (
                  <p className="text-[11px] font-bold text-journey-brown/60 leading-relaxed italic">
-                   偵測到行程 ID: <span className="text-journey-green font-black">{id}</span><br/>
-                   點擊下方按鈕，手機資料將與雲端<span className="text-journey-red font-black"> 100% 同步</span>。
+                   準備同步 ID: <span className="text-journey-green font-black">{id}</span><br/>
+                   將自動探測資料庫結構並完成克隆。
                  </p>
                ) : (
                  <p className="text-[11px] font-bold text-journey-brown/60 leading-relaxed italic">
-                   未偵測到 ID，這可能是因為 App 毀損了網址。<br/>請從電腦端複製 ID 並手動輸入。
+                   未偵測到 ID，請手動輸入。<br/>(ID 可在電腦端的設定中找到)
                  </p>
                )}
             </div>
@@ -217,7 +209,7 @@ const AutoSyncHandler = () => {
               <div className="relative">
                 <input 
                   type="text" 
-                  placeholder="輸入 9 碼 ID (例如: trip-xxxx)" 
+                  placeholder="輸入行程 ID (trip-xxxx)" 
                   className="w-full bg-journey-cream p-5 rounded-2xl font-black text-center focus:outline-none border-4 border-white shadow-inner text-sm"
                   onChange={(e) => setId(e.target.value)}
                 />
@@ -226,12 +218,12 @@ const AutoSyncHandler = () => {
 
             <button 
               onClick={() => startSync()} 
-              disabled={!id || id.length < 5}
-              className={`w-full py-6 rounded-[2.2rem] font-black shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 ${id ? 'bg-journey-green text-white' : 'bg-journey-brown/10 text-journey-brown/20'}`}
+              disabled={!id}
+              className={`w-full py-6 rounded-[2.2rem] font-black shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 ${id ? 'bg-journey-green text-white shadow-journey-green/20' : 'bg-journey-brown/10 text-journey-brown/20'}`}
             >
-              確定同步行程 <ArrowRight size={20}/>
+              開始鏡像對齊 <ArrowRight size={20}/>
             </button>
-            <button onClick={() => navigate('/schedule')} className="text-journey-brown/20 font-black text-[10px] uppercase tracking-widest">不進行同步</button>
+            <button onClick={() => navigate('/schedule')} className="text-journey-brown/20 font-black text-[10px] uppercase tracking-widest">取消同步</button>
           </div>
         )}
 
@@ -239,14 +231,13 @@ const AutoSyncHandler = () => {
           <div className="space-y-4">
              <div className="w-16 h-16 border-8 border-journey-green/20 border-t-journey-green rounded-full animate-spin mx-auto mb-4" />
              <p className="text-sm font-black text-journey-brown italic">同步進度: {progress}%</p>
-             <p className="text-[10px] font-bold text-journey-brown/30 uppercase tracking-widest">請不要關閉此頁面...</p>
           </div>
         )}
 
         {status === 'success' && (
           <div className="space-y-4">
-             <p className="text-lg font-black text-journey-green italic">✨ 100% 鏡像完成！</p>
-             <p className="text-[11px] font-bold text-journey-brown/40">即將跳轉至主頁面...</p>
+             <p className="text-lg font-black text-journey-green italic">✨ 鏡像克隆成功！</p>
+             <p className="text-[11px] font-bold text-journey-brown/40">正在進入行程...</p>
           </div>
         )}
 
@@ -259,16 +250,14 @@ const AutoSyncHandler = () => {
                </p>
             </div>
             <div className="space-y-3">
-               <div className="relative">
-                <input 
-                  type="text" 
-                  value={id}
-                  placeholder="重新輸入 ID" 
-                  className="w-full bg-journey-cream p-5 rounded-2xl font-black text-center focus:outline-none border-4 border-white shadow-inner"
-                  onChange={(e) => setId(e.target.value)}
-                />
-              </div>
-              <button onClick={() => startSync()} className="w-full bg-journey-brown text-white py-5 rounded-3xl font-black shadow-lg">手動 ID 重新同步</button>
+              <input 
+                type="text" 
+                value={id}
+                placeholder="重新輸入 ID" 
+                className="w-full bg-journey-cream p-5 rounded-2xl font-black text-center focus:outline-none border-4 border-white shadow-inner"
+                onChange={(e) => setId(e.target.value)}
+              />
+              <button onClick={() => startSync()} className="w-full bg-journey-brown text-white py-5 rounded-3xl font-black shadow-lg">嘗試重新同步</button>
               <button onClick={() => setStatus('check')} className="w-full text-journey-brown/20 font-black py-2">回上一步</button>
             </div>
           </div>
@@ -302,17 +291,21 @@ const AppContent = () => {
     const initApp = async () => {
       await initSupabaseAuth();
       if (!hasSyncRef.current && supabase && tripConfig.id) {
-        // 靜默同步基礎行程資訊
-        const { data } = await supabase.from('trips').select('*').eq('id', tripConfig.id);
-        if (data && data.length > 0) {
-          const updated = {
-            ...tripConfig,
-            title: data[0].title,
-            dateRange: data[0].date_range
-          };
-          setTripConfig(updated);
-          localStorage.setItem('trip_config', JSON.stringify(updated));
-        }
+        // 靜默偵測與更新 (同樣使用動態表名探測邏輯)
+        const checkUpdate = async () => {
+          try {
+            let res = await supabase.from('trips').select('*').eq('id', tripConfig.id);
+            if (res.error && res.error.message.includes('not find')) {
+              res = await supabase.from('trip').select('*').eq('id', tripConfig.id);
+            }
+            if (res.data && res.data.length > 0) {
+              const updated = { ...tripConfig, title: res.data[0].title, dateRange: res.data[0].date_range };
+              setTripConfig(updated);
+              localStorage.setItem('trip_config', JSON.stringify(updated));
+            }
+          } catch(e) {}
+        };
+        checkUpdate();
         hasSyncRef.current = true;
       }
       setInitializing(false);
@@ -321,7 +314,7 @@ const AppContent = () => {
   }, [tripConfig.id]);
 
   useEffect(() => {
-    setIsAnyModalOpen(showSettings || location.pathname.includes('/sync/'));
+    setIsAnyModalOpen(showSettings || location.pathname.includes('/sync'));
   }, [showSettings, location.pathname]);
 
   if (initializing) return <LoadingScreen />;
@@ -385,7 +378,7 @@ const LoadingScreen = () => (
       </div>
     </div>
     <p className="mt-10 text-2xl font-black italic tracking-tighter">旅程即將開啟...</p>
-    <p className="mt-2 text-xs font-bold opacity-30 uppercase tracking-[0.4em]">Tabi-Kuma Mirror v4.5</p>
+    <p className="mt-2 text-xs font-bold opacity-30 uppercase tracking-[0.4em]">Tabi-Kuma Mirror v4.6</p>
   </div>
 );
 
@@ -403,7 +396,6 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: any) => {
   }, [startDate, endDate]);
 
   const copySyncLink = () => {
-    // 強化版連結：加上 query param 以確保在某些 App 下也能解析
     const base = window.location.origin + window.location.pathname;
     const syncUrl = `${base}#/sync/${config.id}?id=${config.id}`;
     navigator.clipboard.writeText(syncUrl);
@@ -414,18 +406,18 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: any) => {
   const handleUpdateTrip = async () => {
     setIsProcessing(true);
     try {
-      const payload = {
-        id: config.id,
-        title: formData.title,
-        date_range: formData.dateRange
-      };
+      const payload = { id: config.id, title: formData.title, date_range: formData.dateRange };
       if (supabase) {
-        await supabase.from('trips').upsert(payload);
+        // 嘗試複數，失敗則嘗試單數
+        let res = await supabase.from('trips').upsert(payload);
+        if (res.error && res.error.message.includes('not find')) {
+          await supabase.from('trip').upsert(payload);
+        }
       }
       onSave(formData);
       onClose();
     } catch (e) {
-      alert("儲存失敗，請確認網路連線。");
+      alert("儲存失敗，請檢查連線。");
     } finally {
       setIsProcessing(false);
     }
@@ -441,8 +433,8 @@ const TripSettingsModal = ({ isOpen, onClose, config, onSave }: any) => {
 
         <div className="p-7 bg-journey-green/10 rounded-[2.5rem] border-4 border-white shadow-soft-sm space-y-4">
            <div>
-             <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">究極鏡像連結 (v4.5)</p>
-             <p className="text-[8px] font-bold text-journey-brown/40 italic leading-tight">將此連結傳給隊友，手機端點開即可完成 100% 數據鏡像。</p>
+             <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">究極鏡像連結 (v4.6)</p>
+             <p className="text-[8px] font-bold text-journey-brown/40 italic leading-tight">支援 Schema 自適應。手機端點開即可完成數據鏡像。</p>
            </div>
            <button onClick={copySyncLink} className={`w-full py-5 rounded-2xl font-black text-xs flex items-center justify-center gap-3 transition-all ${shareCopied ? 'bg-journey-darkGreen text-white' : 'bg-white text-journey-green shadow-sm border-2 border-journey-green/10 active:scale-95'}`}>
              {shareCopied ? <><CheckCircle2 size={18}/> 連結複製成功！</> : <><LinkIcon size={18}/> 產生克隆連結</>}
