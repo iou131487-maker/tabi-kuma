@@ -23,6 +23,20 @@ export const THEME_COLORS = {
   other: 'bg-journey-sand'
 };
 
+/**
+ * 少女馬卡龍色系映射表 (Maiden Macaron Palette)
+ * 確保 6 個分頁擁有完全不同的溫柔色調
+ */
+export const PAGE_BACKGROUNDS: Record<string, string> = {
+  '/schedule': 'bg-[#E8F8F5]', // 蘇打薄荷
+  '/bookings': 'bg-[#EBF5FB]', // 晴空粉藍
+  '/expense': 'bg-[#FEF9E7]',  // 奶油檸檬
+  '/planning': 'bg-[#F5EEF8]', // 薰衣草紫
+  '/journal': 'bg-[#FDEDEC]',  // 玫瑰粉紅
+  '/members': 'bg-[#FEF5E7]',  // 杏桃甜橙
+  '/sync': 'bg-[#FDFBF7]'      // 奶油白 (同步頁面)
+};
+
 export const CATEGORY_ICONS = {
   attraction: <MapPin size={16} />,
   food: <Utensils size={16} />,
@@ -40,8 +54,30 @@ export const NAV_ITEMS = [
   { id: 'members', label: '成員', icon: <Users size={20} /> },
 ];
 
-export const MOCK_MEMBERS = [
-  { id: '1', name: '狸克', avatar: 'https://picsum.photos/seed/nook/100/100' },
-  { id: '2', name: '西施惠', avatar: 'https://picsum.photos/seed/isabelle/100/100' },
-  { id: '3', name: '豆狸', avatar: 'https://picsum.photos/seed/timmy/100/100' },
-];
+/**
+ * 終極安全 JSON 解析函數 (v7.3.3)
+ * 自動移除結尾逗號，防止 Unexpected token ] 錯誤
+ */
+export const tryParseJSON = (jsonString: string | null | undefined, fallback: any = null) => {
+  if (!jsonString || typeof jsonString !== 'string') return fallback;
+  let cleaned = jsonString.trim();
+  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) return fallback;
+  // 修正結尾逗號
+  cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
+  try {
+    const result = JSON.parse(cleaned);
+    return result === null ? fallback : result;
+  } catch (e) {
+    console.warn("[JSON Parse Error]", e);
+    return fallback;
+  }
+};
+
+export const safeJSONParse = (key: string, fallback: any) => {
+  try {
+    const item = localStorage.getItem(key);
+    return tryParseJSON(item, fallback);
+  } catch (e) {
+    return fallback;
+  }
+};
