@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { NAV_ITEMS } from './constants';
 import { initSupabaseAuth, supabase } from './supabase'; 
-import { Settings2, Save, X, Plane, Copy, Loader2, Share2, Cloud, RefreshCw, Download, CheckCircle2, AlertCircle, Info, Link as LinkIcon, Calendar, ArrowRight, ShieldCheck, Wifi, Database, Search, Smartphone, Layers, Code, Terminal, ExternalLink, CloudUpload } from 'lucide-react';
+import { Settings2, Save, X, Plane, Copy, Loader2, Share2, Cloud, RefreshCw, Download, CheckCircle2, AlertCircle, Info, Link as LinkIcon, Calendar, ArrowRight, ShieldCheck, Wifi, Database, Search, Smartphone, Layers, Code, Terminal, ExternalLink, CloudUpload, RotateCcw } from 'lucide-react';
 import ScheduleView from './features/ScheduleView';
 import BookingsView from './features/BookingsView';
 import ExpenseView from './features/ExpenseView';
@@ -18,55 +18,70 @@ const DEFAULT_CONFIG = {
   id: 'trip-demo-001' 
 };
 
+// 工具：移除物件中的 undefined 屬性
+const sanitizeForUpload = (data: any[]) => {
+  return data.map(item => JSON.parse(JSON.stringify(item, (key, value) => 
+    value === undefined ? null : value
+  )));
+};
+
 /**
- * v6.7 核心鏡像引擎：
- * 這是手機端資料還原的最後防線。
+ * v7.2 終極鏡像寫入引擎
+ * 確保 6 個分頁的所有 Key 被手機端強制覆蓋，並建立緊急還原點
  */
 const atomicMirrorWrite = (tripId: string, allData: Record<string, any>) => {
   try {
     const tripInfo = allData.trips?.[0];
-    if (!tripInfo) throw new Error("無效的行程配置");
+    const safeTitle = tripInfo?.title || "已克隆的行程";
+    const safeDate = tripInfo?.date_range || "2025-01-01 ~ 2025-01-07";
 
-    // 1. 清理舊資料：精確清理此 Trip ID 的所有資料
-    Object.keys(localStorage).forEach(k => {
-      if (k.includes(tripId)) localStorage.removeItem(k);
-    });
+    console.log(`[Mirror] Writing data for Trip ID: ${tripId}`);
 
-    // 2. 寫入主配置
+    // 0. 建立完整備份還原點 (Emergency Restore Point)
+    localStorage.setItem(`backup_full_bundle_${tripId}`, JSON.stringify(allData));
+
+    // 1. 寫入主配置
     localStorage.setItem('trip_config', JSON.stringify({
       id: tripId,
-      title: tripInfo.title,
-      dateRange: tripInfo.date_range,
+      title: safeTitle,
+      dateRange: safeDate,
       userAvatar: DEFAULT_CONFIG.userAvatar
     }));
     
-    // 設置克隆保護鎖 (保護期延長至 2 分鐘，防止視圖覆蓋資料)
-    localStorage.setItem(`cloned_${tripId}`, Date.now().toString());
-    localStorage.setItem(`last_day_${tripId}`, '0');
-    localStorage.setItem(`plan_last_tab_${tripId}`, 'todo');
+    // 設定強力克隆鎖：20 分鐘內禁止任何元件執行「空覆蓋」
+    const expiry = Date.now() + 1200000;
+    localStorage.setItem(`cloned_lock_${tripId}`, expiry.toString());
 
-    // 3. 行程分頁 (Schedule)
-    if (Array.isArray(allData.schedules)) {
-      const scheduleMap: Record<number, any[]> = {};
-      allData.schedules.forEach((s: any) => {
-        const d = Number(s.day_index || 0);
-        scheduleMap[d] = scheduleMap[d] || [];
-        scheduleMap[d].push(s);
-      });
-      Object.entries(scheduleMap).forEach(([day, items]) => {
-        localStorage.setItem(`sched_${tripId}_day${day}`, JSON.stringify(items));
-      });
+    // 2. 行程 (Schedule) - 清除舊資料並寫入新資料
+    // 清除舊天數
+    Object.keys(localStorage).filter(k => k.startsWith(`sched_${tripId}_day`)).forEach(k => localStorage.removeItem(k));
+    
+    const schedules = Array.isArray(allData.schedules) ? allData.schedules : [];
+    const scheduleMap: Record<number, any[]> = {};
+    
+    // 即使是空資料，也需要確保組件讀取到空陣列而不是 null
+    // 預先找出最大天數，避免中間斷層
+    const maxDay = schedules.reduce((max: number, curr: any) => Math.max(max, Number(curr.day_index || 0)), 6);
+    
+    schedules.forEach((s: any) => {
+      const d = Number(s.day_index || 0);
+      scheduleMap[d] = scheduleMap[d] || [];
+      scheduleMap[d].push(s);
+    });
+
+    for (let i = 0; i <= maxDay; i++) {
+        localStorage.setItem(`sched_${tripId}_day${i}`, JSON.stringify(scheduleMap[i] || []));
     }
+    localStorage.setItem(`last_day_${tripId}`, '0'); // 重置到第一天
 
-    // 4. 清單分頁 (Planning)
-    if (Array.isArray(allData.planning_items)) {
-      ['todo', 'packing', 'shopping'].forEach(t => {
-        const filtered = allData.planning_items.filter((p: any) => p.type === t);
-        localStorage.setItem(`plan_${tripId}_${t}`, JSON.stringify(filtered));
-      });
-    }
+    // 3. 清單 (Planning) - 處理三種 Tab
+    const plans = Array.isArray(allData.planning_items) ? allData.planning_items : [];
+    ['todo', 'packing', 'shopping'].forEach(t => {
+      const filtered = plans.filter((p: any) => p.type === t);
+      localStorage.setItem(`plan_${tripId}_${t}`, JSON.stringify(filtered));
+    });
 
-    // 5. 其餘分頁 (Bookings, Expenses, Journals, Members)
+    // 4. 其餘分頁 (Bookings, Expenses, Journals, Members)
     const mappings: Record<string, string> = {
       'bookings': `book_${tripId}`,
       'expenses': `exp_${tripId}`,
@@ -75,7 +90,8 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>) => {
     };
 
     Object.entries(mappings).forEach(([dbKey, localKey]) => {
-      localStorage.setItem(localKey, JSON.stringify(allData[dbKey] || []));
+      const items = Array.isArray(allData[dbKey]) ? allData[dbKey] : [];
+      localStorage.setItem(localKey, JSON.stringify(items));
     });
 
     return true;
@@ -86,26 +102,26 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>) => {
 };
 
 const AutoSyncHandler = () => {
-  const location = useLocation();
   const [status, setStatus] = useState<'check' | 'syncing' | 'success' | 'error'>('check');
   const [errorMessage, setErrorMessage] = useState('');
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState<Record<string, number>>({});
 
   const getTripId = () => {
-    // 優先從 Hash 獲取參數，適配 React Router 7 的 HashRouter
-    const hashPart = window.location.hash.split('?')[1];
-    const urlParams = new URLSearchParams(hashPart || window.location.search.substring(1));
-    return urlParams.get('id');
+    try {
+      const hashParams = new URLSearchParams(window.location.hash.split('?')[1]);
+      const searchParams = new URLSearchParams(window.location.search);
+      return hashParams.get('id') || searchParams.get('id');
+    } catch(e) { return null; }
   };
 
   const startSync = async () => {
     const id = getTripId();
-    if (!id) { setErrorMessage("連結無效：找不到 ID"); setStatus('error'); return; }
+    if (!id) { setErrorMessage("連結無效：URL 缺少 id 參數"); setStatus('error'); return; }
     
     setStatus('syncing'); setProgress(5);
     try {
-      if (!supabase) throw new Error("DB Connection Error");
+      if (!supabase) throw new Error("無法連接到資料庫");
       
       const tables = ['trips', 'schedules', 'bookings', 'expenses', 'planning_items', 'members', 'journals'];
       const bundle: Record<string, any> = {};
@@ -113,25 +129,33 @@ const AutoSyncHandler = () => {
 
       for (let i = 0; i < tables.length; i++) {
         const t = tables[i];
-        const { data, error } = await supabase.from(t).select('*').eq(t === 'trips' ? 'id' : 'trip_id', id);
-        if (error) throw new Error(`${t} 同步失敗`);
+        const queryField = t === 'trips' ? 'id' : 'trip_id';
+        const { data, error } = await supabase.from(t).select('*').eq(queryField, id);
+        
+        if (error) console.warn(`讀取 ${t} 失敗:`, error.message);
+        
         bundle[t] = data || [];
         counts[t] = bundle[t].length;
         setProgress(Math.round(5 + ((i + 1) / tables.length) * 85));
       }
 
-      setStats(counts);
-      if (!bundle.trips?.length) throw new Error("雲端找不到此行程資料。");
+      // 檢查是否完全空白 (可能是 ID 錯誤或權限問題)
+      const totalItems = Object.values(counts).reduce((a, b) => a + b, 0);
+      if (totalItems === 0 && counts['trips'] === 0) {
+        throw new Error("雲端無資料。請確認電腦端已「強力推送」成功，且連結 ID 正確。");
+      }
 
       if (atomicMirrorWrite(id, bundle)) {
+        setStats(counts);
         setProgress(100);
         setStatus('success');
         setTimeout(() => { 
-          window.location.replace(window.location.origin + window.location.pathname + "#/schedule");
+          // 導向到首頁並重整，確保讀取 LocalStorage
+          window.location.href = window.location.origin + window.location.pathname + "#/schedule";
           window.location.reload(); 
-        }, 1500);
+        }, 2500);
       } else {
-        throw new Error("本機寫入錯誤");
+        throw new Error("本機寫入失敗 (LocalStorage Error)");
       }
     } catch (e: any) { 
       setErrorMessage(e.message); 
@@ -140,32 +164,37 @@ const AutoSyncHandler = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-journey-cream flex flex-col items-center justify-center p-6 text-center">
+    <div className="fixed inset-0 z-[9999] bg-journey-cream flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
       <div className="w-full max-w-sm bg-white rounded-[4rem] p-10 shadow-2xl border-4 border-journey-green overflow-hidden">
-        <div className="w-20 h-20 bg-journey-green/10 rounded-3xl flex items-center justify-center text-journey-green mx-auto mb-6">
-          <Download size={40} className={status === 'syncing' ? 'animate-bounce' : ''}/>
+        <div className="w-24 h-24 bg-journey-green/10 rounded-[2.5rem] flex items-center justify-center text-journey-green mx-auto mb-8 animate-bounce-slow">
+          <Download size={48} />
         </div>
-        <h2 className="text-2xl font-black italic text-journey-brown mb-2 tracking-tighter">鏡像克隆引擎 v6.7</h2>
+        <h2 className="text-3xl font-black italic text-journey-brown mb-4 tracking-tighter">全域鏡像中心 v7.2</h2>
         
         {status === 'check' && (
           <div className="space-y-6">
-            <p className="text-[11px] font-black opacity-40 leading-relaxed px-4">將會覆蓋此手機的所有資料，並還原為電腦端的 100% 鏡像。</p>
-            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl">開始 1:1 克隆</button>
+            <p className="text-[12px] font-black text-journey-brown/40 leading-relaxed px-4">
+              準備下載行程 ID: <span className="text-journey-green">{getTripId()?.slice(0,8)}...</span><br/>
+              這將完整覆蓋本機資料，建立手機端模版。
+            </p>
+            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all text-lg">開始下載數據</button>
           </div>
         )}
 
         {status === 'syncing' && (
-          <div className="space-y-4">
-            <div className="w-full h-3 bg-journey-cream rounded-full overflow-hidden"><div className="h-full bg-journey-green transition-all" style={{width: `${progress}%`}} /></div>
-            <p className="text-[10px] font-black">正在對位雲端分區 {progress}%...</p>
+          <div className="space-y-6">
+            <div className="w-full h-4 bg-journey-cream rounded-full overflow-hidden border-2 border-white">
+              <div className="h-full bg-journey-green transition-all duration-300" style={{width: `${progress}%`}} />
+            </div>
+            <p className="text-[11px] font-black text-journey-green animate-pulse">正在從雲端搬運數據... {progress}%</p>
           </div>
         )}
 
         {status === 'success' && (
-          <div className="space-y-4">
-            <CheckCircle2 size={40} className="text-journey-green mx-auto" />
-            <p className="text-lg font-black text-journey-green">克隆完畢！</p>
-            <div className="bg-journey-cream p-4 rounded-[2rem] text-[9px] font-black text-journey-brown/40 text-left grid grid-cols-2 gap-y-1">
+          <div className="space-y-6">
+            <CheckCircle2 size={48} className="text-journey-green mx-auto" />
+            <p className="text-xl font-black text-journey-green">克隆成功！</p>
+            <div className="bg-journey-cream p-5 rounded-[2.5rem] text-[10px] font-black text-journey-brown/50 text-left grid grid-cols-2 gap-y-2 border-2 border-white shadow-inner">
                <span>🗓️ 行程: {stats.schedules}</span>
                <span>🎫 預訂: {stats.bookings}</span>
                <span>💰 支出: {stats.expenses}</span>
@@ -173,14 +202,17 @@ const AutoSyncHandler = () => {
                <span>👥 成員: {stats.members}</span>
                <span>📸 日誌: {stats.journals}</span>
             </div>
+            <p className="text-[9px] font-black opacity-30 animate-pulse">正在重啟應用程式...</p>
           </div>
         )}
 
         {status === 'error' && (
-          <div className="space-y-4">
-            <AlertCircle size={40} className="text-journey-red mx-auto" />
-            <p className="bg-journey-red/5 p-4 rounded-2xl text-[10px] font-black text-journey-red">{errorMessage}</p>
-            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-4 rounded-3xl font-black">重試同步</button>
+          <div className="space-y-6">
+            <AlertCircle size={48} className="text-journey-red mx-auto" />
+            <div className="bg-journey-red/5 p-5 rounded-3xl text-[11px] font-black text-journey-red border-2 border-journey-red/10">
+              {errorMessage}
+            </div>
+            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-5 rounded-[2rem] font-black text-lg">重試</button>
           </div>
         )}
       </div>
@@ -218,7 +250,7 @@ const AppContent = () => {
   if (initializing) return <LoadingScreen />;
 
   return (
-    <div className="min-h-screen pb-44 flex flex-col">
+    <div className="min-h-screen pb-44 flex flex-col relative z-0">
       <header className={`px-6 pt-16 pb-8 flex justify-between items-start relative z-10`}>
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 bg-journey-green rounded-[1.5rem] flex items-center justify-center text-white shadow-soft -rotate-6 border-4 border-white"><Plane size={28} /></div>
@@ -230,15 +262,15 @@ const AppContent = () => {
         <button onClick={() => setShowSettings(true)} className="w-14 h-14 bg-white/80 backdrop-blur-md rounded-[1.5rem] shadow-soft flex items-center justify-center text-journey-brown/30 border-4 border-white active:scale-90 transition-all"><Settings2 size={26} /></button>
       </header>
 
-      <main className="px-6 flex-grow">
+      <main className="px-6 flex-grow relative z-10">
         <Routes>
           <Route path="/sync" element={<AutoSyncHandler />} />
-          <Route path="/schedule" element={<ScheduleView tripConfig={tripConfig} onModalToggle={setIsAnyModalOpen} />} />
-          <Route path="/bookings" element={<BookingsView tripConfig={tripConfig} onModalToggle={setIsAnyModalOpen} />} />
-          <Route path="/expense" element={<ExpenseView tripConfig={tripConfig} onModalToggle={setIsAnyModalOpen} />} />
-          <Route path="/journal" element={<JournalView tripConfig={tripConfig} onModalToggle={setIsAnyModalOpen} />} />
-          <Route path="/planning" element={<PlanningView tripConfig={tripConfig} onModalToggle={setIsAnyModalOpen} />} />
-          <Route path="/members" element={<MembersView tripConfig={tripConfig} onModalToggle={setIsAnyModalOpen} />} />
+          <Route path="/schedule" element={<ScheduleView tripConfig={tripConfig} />} />
+          <Route path="/bookings" element={<BookingsView tripConfig={tripConfig} />} />
+          <Route path="/expense" element={<ExpenseView tripConfig={tripConfig} />} />
+          <Route path="/journal" element={<JournalView tripConfig={tripConfig} />} />
+          <Route path="/planning" element={<PlanningView tripConfig={tripConfig} />} />
+          <Route path="/members" element={<MembersView tripConfig={tripConfig} />} />
           <Route path="*" element={<Navigate to="/schedule" replace />} />
         </Routes>
       </main>
@@ -265,7 +297,7 @@ const AppContent = () => {
 const LoadingScreen = () => (
   <div className="h-screen w-screen flex flex-col items-center justify-center bg-journey-cream text-journey-brown p-10">
     <div className="w-24 h-24 bg-journey-green rounded-[2.5rem] flex items-center justify-center shadow-xl animate-bounce-slow"><Plane size={48} className="text-white"/></div>
-    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v6.7...</p>
+    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v7.2...</p>
   </div>
 );
 
@@ -280,66 +312,71 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
   const [endDate, setEndDate] = useState(dates[1] || '2025-01-07');
 
   const handleForcePush = async () => {
-    if (!supabase || dbReady === false) return alert("資料庫連結異常");
+    if (!supabase || dbReady === false) return alert("資料庫尚未就緒");
     setPushing(true);
-    setLog(["🚀 全維度深度推送中..."]);
+    setLog(["🚀 啟動強力數據推送引擎 v7.2..."]);
     const finalDateRange = `${startDate} ~ ${endDate}`;
     
     try {
-      // 1. 推送行程主配置
+      // 先寫入 Trip
       await supabase.from('trips').upsert({ id: config.id, title: formData.title, date_range: finalDateRange });
-      setLog(prev => [...prev, "📦 [1/7] 行程配置完成"]);
+      setLog(prev => [...prev, `✅ Trip ID: ${config.id} 確認`]);
 
-      // 2. 推送行程 (Schedules)
-      const schedKeys = Object.keys(localStorage).filter(k => k.startsWith(`sched_${config.id}_day`));
-      for (const k of schedKeys) {
-        const dIdx = Number(k.split('_day')[1]);
-        const data = JSON.parse(localStorage.getItem(k) || "[]");
-        if (data.length > 0) {
-          const sanitized = data.map((i: any) => ({ ...JSON.parse(JSON.stringify(i)), trip_id: config.id, day_index: dIdx }));
-          await supabase.from('schedules').upsert(sanitized);
-        }
-      }
-      setLog(prev => [...prev, "📦 [2/7] 行程數據完成"]);
-
-      // 3. 推送清單 (Planning)
-      const pTypes = ['todo', 'packing', 'shopping'] as const;
-      for (const pt of pTypes) {
-        const data = JSON.parse(localStorage.getItem(`plan_${config.id}_${pt}`) || "[]");
-        if (data.length > 0) {
-          const sanitized = data.map((i: any) => ({ ...JSON.parse(JSON.stringify(i)), trip_id: config.id, type: pt }));
-          await supabase.from('planning_items').upsert(sanitized);
-        }
-      }
-      setLog(prev => [...prev, "📦 [3/7] 清單數據完成"]);
-
-      // 4. 其餘視圖
-      const pages = [
-        { t: 'bookings', k: `book_${config.id}`, n: "預訂" },
-        { t: 'expenses', k: `exp_${config.id}`, n: "記帳" },
-        { t: 'journals', k: `jrnl_${config.id}`, n: "日誌" },
-        { t: 'members', k: `mem_${config.id}`, n: "成員" }
+      const tables = [
+        { name: 'schedules', localPrefix: `sched_${config.id}_day` },
+        { name: 'planning_items', localPrefix: `plan_${config.id}_` },
+        { name: 'bookings', localKey: `book_${config.id}` },
+        { name: 'expenses', localKey: `exp_${config.id}` },
+        { name: 'journals', localKey: `jrnl_${config.id}` },
+        { name: 'members', localKey: `mem_${config.id}` }
       ];
 
-      for (let i = 0; i < pages.length; i++) {
-        const p = pages[i];
-        const data = JSON.parse(localStorage.getItem(p.k) || "[]");
-        if (data.length > 0) {
-          const sanitized = data.map((item: any) => ({ ...JSON.parse(JSON.stringify(item)), trip_id: config.id }));
-          await supabase.from(p.t).upsert(sanitized);
+      for (const t of tables) {
+        let allData: any[] = [];
+        if (t.localPrefix) {
+          // 找出所有符合前綴的 Key
+          const keys = Object.keys(localStorage).filter(k => k.startsWith(t.localPrefix!));
+          keys.forEach(k => {
+            const data = JSON.parse(localStorage.getItem(k) || "[]");
+            if (Array.isArray(data)) allData = [...allData, ...data];
+          });
+        } else if (t.localKey) {
+          allData = JSON.parse(localStorage.getItem(t.localKey) || "[]");
         }
-        setLog(prev => [...prev, `📦 [${i+4}/7] ${p.n}數據完成`]);
+
+        if (allData.length > 0) {
+          // 數據消毒與 ID 注入
+          const sanitized = sanitizeForUpload(allData.map(item => ({
+            ...item,
+            trip_id: config.id
+          })));
+          
+          const { error } = await supabase.from(t.name).upsert(sanitized);
+          if (error) setLog(prev => [...prev, `⚠️ ${t.name} 上傳失敗: ${error.message}`]);
+          else setLog(prev => [...prev, `✅ ${t.name} 上傳成功 (${allData.length} 筆)`]);
+        } else {
+           setLog(prev => [...prev, `ℹ️ ${t.name} 無本地資料，略過`]);
+        }
       }
 
-      setLog(prev => [...prev, "✨ 數據已完美就緒於雲端！"]);
-      alert("✅ 電腦端資料已全量上傳！\n現在手機端點擊克隆連結，所有分頁都將完全還原。");
+      alert("✨ 數據已成功封裝並推送到雲端！\n現在請用手機點擊「複製連結」，即可 100% 完整克隆所有分頁。");
       onSave({ ...formData, id: config.id, dateRange: finalDateRange });
-    } catch (e: any) { 
-      setLog(prev => [...prev, "❌ 異常: " + e.message]);
-      alert("推送失敗: " + e.message); 
-    } finally { 
-      setPushing(false); 
-    }
+    } catch (e: any) { alert("推送中斷: " + e.message); } finally { setPushing(false); }
+  };
+
+  const handleRestoreFromBackup = () => {
+    if (!confirm('若頁面空白，此功能將嘗試從最近一次下載的備份還原資料。確定執行？')) return;
+    try {
+      const backup = localStorage.getItem(`backup_full_bundle_${config.id}`);
+      if (!backup) throw new Error("找不到備份資料，請重新執行「掃碼/連結下載」。");
+      const bundle = JSON.parse(backup);
+      if (atomicMirrorWrite(config.id, bundle)) {
+        alert("還原成功！正在重整頁面...");
+        window.location.reload();
+      } else {
+        throw new Error("還原寫入失敗");
+      }
+    } catch (e: any) { alert(e.message); }
   };
 
   const copyLink = () => {
@@ -351,40 +388,37 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
     <div className="fixed inset-0 z-[6000] bg-journey-brown/80 backdrop-blur-xl flex items-end sm:items-center justify-center animate-in fade-in">
       <div className="bg-white w-full max-w-md rounded-t-[4rem] sm:rounded-[3.5rem] shadow-2xl flex flex-col max-h-[90vh] border-t-8 border-journey-green overflow-hidden">
         <div className="p-10 pb-6 flex justify-between items-center bg-white">
-          <h3 className="text-2xl font-black italic text-journey-brown tracking-tighter">同步中心 v6.7</h3>
+          <h3 className="text-2xl font-black italic text-journey-brown tracking-tighter">同步設定 v7.2</h3>
           <button onClick={onClose} className="p-2 bg-journey-cream rounded-full text-journey-brown/30"><X size={20}/></button>
         </div>
 
         <div className="flex-grow overflow-y-auto px-10 pb-10 space-y-6">
           <div className="p-8 bg-journey-green/10 rounded-[2.5rem] border-4 border-white shadow-soft-sm space-y-4">
-            <button onClick={handleForcePush} disabled={pushing} className="w-full py-6 rounded-2xl bg-white text-journey-green font-black shadow-sm flex items-center justify-center gap-3 active:scale-95 transition-all">
-              {pushing ? <Loader2 className="animate-spin"/> : <CloudUpload/>} 強力推送數據至雲端
+            <h4 className="text-[10px] font-black text-journey-green uppercase tracking-widest text-center">電腦端操作</h4>
+            <button onClick={handleForcePush} disabled={pushing} className="w-full py-6 rounded-2xl bg-white text-journey-green font-black shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all">
+              {pushing ? <Loader2 className="animate-spin" size={24}/> : <CloudUpload size={24}/>} 1. 強力推送數據
+            </button>
+            <button onClick={copyLink} className={`w-full py-6 rounded-2xl font-black text-sm flex items-center justify-center gap-3 transition-all border-4 ${copied ? 'bg-journey-green text-white border-white' : 'bg-journey-cream text-journey-brown border-white'}`}>
+              <LinkIcon size={20}/> {copied ? '已複製連結！' : '2. 複製手機下載連結'}
             </button>
             {log.length > 0 && (
-              <div className="bg-white/50 p-4 rounded-xl text-[9px] font-mono text-journey-brown/40 space-y-1">
-                {log.slice(-3).map((l, i) => <div key={i}>{l}</div>)}
+              <div className="bg-white/50 p-5 rounded-[2rem] text-[10px] font-mono text-journey-brown/40 space-y-1 border-2 border-white max-h-32 overflow-y-auto">
+                {log.map((l, i) => <div key={i}>{l}</div>)}
               </div>
             )}
           </div>
 
-          <div className="space-y-4 pt-2">
-             <div className="space-y-2">
-                <label className="text-[10px] font-black text-journey-brown/30 ml-4">行程名稱</label>
-                <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black border-4 border-white" />
-             </div>
-             <div className="grid grid-cols-2 gap-3">
-                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black border-4 border-white text-xs" />
-                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black border-4 border-white text-xs" />
-             </div>
+          <div className="p-8 bg-journey-red/5 rounded-[2.5rem] border-4 border-white shadow-soft-sm space-y-4">
+            <h4 className="text-[10px] font-black text-journey-red uppercase tracking-widest text-center">手機端救援</h4>
+            <p className="text-[10px] text-center text-journey-brown/40">若下載後頁面仍顯示空白，請嘗試：</p>
+            <button onClick={handleRestoreFromBackup} className="w-full py-5 rounded-2xl bg-white text-journey-red font-black shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all">
+              <RotateCcw size={20}/> 從備份強制還原
+            </button>
           </div>
-
-          <button onClick={copyLink} className={`w-full py-6 rounded-[2rem] font-black text-xs flex items-center justify-center gap-2 ${copied ? 'bg-journey-green text-white' : 'bg-journey-brown/5 text-journey-brown'}`}>
-            <LinkIcon size={18}/> {copied ? '克隆連結已複製' : '產生手機克隆連結'}
-          </button>
         </div>
 
         <div className="p-10 pt-4 pb-16 bg-white border-t border-journey-cream">
-           <button onClick={onClose} className="w-full bg-journey-brown text-white py-6 rounded-[2.5rem] font-black shadow-2xl active:scale-95 transition-all">離開中心</button>
+           <button onClick={onClose} className="w-full bg-journey-brown text-white py-6 rounded-[2.5rem] font-black shadow-2xl active:scale-95 transition-all">完成</button>
         </div>
       </div>
     </div>
