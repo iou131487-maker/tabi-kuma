@@ -18,19 +18,28 @@ const DEFAULT_CONFIG = {
   id: 'trip-demo-001' 
 };
 
+/**
+ * 原子鏡像寫入：將雲端整包資料精確寫入本地 LocalStorage
+ */
 const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTableKey: string) => {
   try {
     const tripInfo = allData[tripTableKey]?.[0];
     if (!tripInfo) return false;
+
+    // 1. 清理舊資料
     Object.keys(localStorage).forEach(k => {
       if (k.includes(tripId)) localStorage.removeItem(k);
     });
+
+    // 2. 寫入基本配置
     localStorage.setItem('trip_config', JSON.stringify({
       id: tripId,
       title: tripInfo.title,
       dateRange: tripInfo.date_range,
       userAvatar: DEFAULT_CONFIG.userAvatar
     }));
+
+    // 3. 處理行程 (Schedules) - 按天分組
     if (allData.schedules) {
       const dayGroups = allData.schedules.reduce((acc: any, s: any) => {
         acc[s.day_index] = acc[s.day_index] || [];
@@ -41,19 +50,38 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
         localStorage.setItem(`sched_${tripId}_day${idx}`, JSON.stringify(data));
       });
     }
+
+    // 4. 處理準備清單 (Planning) - 重要：必須按 type 分類存儲
+    if (allData.planning_items) {
+      const types = ['todo', 'packing', 'shopping'];
+      types.forEach(t => {
+        const filtered = allData.planning_items.filter((item: any) => item.type === t);
+        if (filtered.length > 0) {
+          localStorage.setItem(`plan_${tripId}_${t}`, JSON.stringify(filtered));
+        }
+      });
+    }
+
+    // 5. 處理其他標準表格
     const tableMappings: Record<string, string> = {
       'bookings': `book_${tripId}`,
       'expenses': `exp_${tripId}`,
       'journals': `jrnl_${tripId}`,
-      'members': `mem_${tripId}`,
-      'planning_items': `plan_${tripId}` 
+      'members': `mem_${tripId}`
     };
+
     Object.entries(tableMappings).forEach(([dbKey, localKey]) => {
-      if (allData[dbKey]) localStorage.setItem(localKey, JSON.stringify(allData[dbKey]));
+      if (allData[dbKey] && allData[dbKey].length > 0) {
+        localStorage.setItem(localKey, JSON.stringify(allData[dbKey]));
+      }
     });
+
     localStorage.setItem(`last_mirror_sync_${tripId}`, new Date().toISOString());
     return true;
-  } catch (e) { return false; }
+  } catch (e) { 
+    console.error("Atomic write failed:", e);
+    return false; 
+  }
 };
 
 const AutoSyncHandler = () => {
@@ -70,8 +98,11 @@ const AutoSyncHandler = () => {
     setStatus('syncing'); setProgress(10);
     try {
       if (!supabase) throw new Error("資料庫未連線");
-      const tables = ['trips', 'schedules', 'bookings', 'expenses', 'planning_items', 'members'];
+      
+      // 擴展同步表，加入 journals
+      const tables = ['trips', 'schedules', 'bookings', 'expenses', 'planning_items', 'members', 'journals'];
       const bundle: Record<string, any> = {};
+      
       for (let i = 0; i < tables.length; i++) {
         const t = tables[i];
         const { data, error } = await supabase.from(t).select('*').eq(t === 'trips' ? 'id' : 'trip_id', id);
@@ -79,19 +110,31 @@ const AutoSyncHandler = () => {
         bundle[t] = data || [];
         setProgress(Math.round(10 + ((i + 1) / tables.length) * 90));
       }
+
       if (!bundle.trips?.length) throw new Error("雲端找不到行程。請先在電腦端點擊強力推送。");
+      
       if (atomicMirrorWrite(id, bundle, 'trips')) {
         setStatus('success');
-        setTimeout(() => { window.location.replace(window.location.origin + window.location.pathname + "#/schedule"); window.location.reload(); }, 1500);
+        setTimeout(() => { 
+          window.location.replace(window.location.origin + window.location.pathname + "#/schedule"); 
+          window.location.reload(); 
+        }, 1500);
+      } else {
+        throw new Error("本地寫入失敗");
       }
-    } catch (e: any) { setErrorMessage(e.message); setStatus('error'); }
+    } catch (e: any) { 
+      setErrorMessage(e.message); 
+      setStatus('error'); 
+    }
   };
 
   return (
     <div className="fixed inset-0 z-[5000] bg-journey-cream flex flex-col items-center justify-center p-6 text-center">
       <div className="w-full max-w-sm bg-white rounded-[4rem] p-10 shadow-2xl border-4 border-journey-green">
-        <div className="w-20 h-20 bg-journey-green/10 rounded-3xl flex items-center justify-center text-journey-green mx-auto mb-6"><Layers size={40} className={status === 'syncing' ? 'animate-pulse' : ''}/></div>
-        <h2 className="text-2xl font-black italic text-journey-brown mb-2">克隆同步 v5.2</h2>
+        <div className="w-20 h-20 bg-journey-green/10 rounded-3xl flex items-center justify-center text-journey-green mx-auto mb-6">
+          <Layers size={40} className={status === 'syncing' ? 'animate-pulse' : ''}/>
+        </div>
+        <h2 className="text-2xl font-black italic text-journey-brown mb-2">克隆同步 v5.5</h2>
         {status === 'check' && (
           <div className="space-y-6">
             <p className="text-[11px] font-bold opacity-40 italic">目標 ID: {id}</p>
@@ -196,7 +239,7 @@ const AppContent = () => {
 const LoadingScreen = () => (
   <div className="h-screen w-screen flex flex-col items-center justify-center bg-journey-cream text-journey-brown p-10">
     <div className="w-24 h-24 bg-journey-green rounded-[2.5rem] flex items-center justify-center shadow-xl animate-bounce-slow"><Plane size={48} className="text-white"/></div>
-    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v5.2...</p>
+    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v5.5...</p>
   </div>
 );
 
@@ -205,7 +248,6 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
   const [pushing, setPushing] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // 解析日期範圍 YYYY-MM-DD ~ YYYY-MM-DD
   const dates = config.dateRange.split(' ~ ');
   const [startDate, setStartDate] = useState(dates[0] || '2025-01-01');
   const [endDate, setEndDate] = useState(dates[1] || '2025-01-07');
@@ -217,27 +259,48 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
     const finalConfig = { ...formData, dateRange: finalDateRange };
     
     try {
+      // 1. 推送行程主表
       await supabase.from('trips').upsert({ id: config.id, title: formData.title, date_range: finalDateRange });
-      const tables = ['schedules', 'bookings', 'expenses', 'planning_items', 'members', 'journals'];
-      for (const t of tables) {
-        if (t === 'schedules') {
-           for(let d=0; d<15; d++) {
-             const data = localStorage.getItem(`sched_${config.id}_day${d}`);
-             if (data) await supabase.from('schedules').upsert(JSON.parse(data));
-           }
-           continue;
-        }
-        let localKey = (t === 'bookings') ? `book_${config.id}` : (t === 'expenses') ? `exp_${config.id}` : (t === 'planning_items') ? `plan_${config.id}_todo` : (t === 'members') ? `mem_${config.id}` : `jrnl_${config.id}`;
-        const data = localStorage.getItem(localKey);
+      
+      // 2. 推送行程細節 (Schedules)
+      for(let d=0; d<15; d++) {
+        const data = localStorage.getItem(`sched_${config.id}_day${d}`);
+        if (data) await supabase.from('schedules').upsert(JSON.parse(data));
+      }
+
+      // 3. 推送準備清單 (Planning) - 掃描所有分頁
+      const planTypes = ['todo', 'packing', 'shopping'];
+      for (const pt of planTypes) {
+        const data = localStorage.getItem(`plan_${config.id}_${pt}`);
+        if (data) await supabase.from('planning_items').upsert(JSON.parse(data));
+      }
+
+      // 4. 推送其他資料 (Bookings, Expenses, Journals, Members)
+      const otherTables = [
+        { table: 'bookings', key: `book_${config.id}` },
+        { table: 'expenses', key: `exp_${config.id}` },
+        { table: 'journals', key: `jrnl_${config.id}` },
+        { table: 'members', key: `mem_${config.id}` }
+      ];
+
+      for (const item of otherTables) {
+        const data = localStorage.getItem(item.key);
         if (data) {
           const parsed = JSON.parse(data);
-          if (Array.isArray(parsed) && parsed.length > 0) await supabase.from(t).upsert(parsed);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            await supabase.from(item.table).upsert(parsed);
+          }
         }
       }
-      alert("✅ 推送成功！行程日期已更新並同步至雲端。");
+
+      alert("✅ 全頁面同步推送成功！手機端現在可以克隆完整資料了。");
       onSave(finalConfig);
-    } catch (e) { alert("推送失敗"); }
-    finally { setPushing(false); }
+    } catch (e: any) { 
+      console.error(e);
+      alert("推送失敗: " + e.message); 
+    } finally { 
+      setPushing(false); 
+    }
   };
 
   const copyLink = () => {
@@ -248,18 +311,16 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
   return !isOpen ? null : (
     <div className="fixed inset-0 z-[6000] bg-journey-brown/80 backdrop-blur-xl flex items-end sm:items-center justify-center animate-in fade-in">
       <div className="bg-white w-full max-w-md rounded-t-[4rem] sm:rounded-[3.5rem] shadow-2xl flex flex-col max-h-[90vh] border-t-8 border-journey-green overflow-hidden">
-        {/* Header */}
         <div className="p-10 pb-6 flex justify-between items-center bg-white">
           <h3 className="text-2xl font-black italic text-journey-brown">旅程設定</h3>
           <button onClick={onClose} className="p-2 bg-journey-cream rounded-full text-journey-brown/30"><X size={20}/></button>
         </div>
 
-        {/* Scrollable Content */}
         <div className="flex-grow overflow-y-auto px-10 pb-10 space-y-6">
           <div className="p-6 bg-journey-green/10 rounded-[2.5rem] border-4 border-white shadow-soft-sm space-y-4">
             <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">同步狀態</p>
             <button onClick={handleForcePush} disabled={pushing} className="w-full py-5 rounded-2xl bg-white text-journey-green font-black shadow-sm flex items-center justify-center gap-3 active:scale-95">
-              {pushing ? <Loader2 className="animate-spin"/> : <CloudUpload/>} 推送本地資料並儲存
+              {pushing ? <Loader2 className="animate-spin"/> : <CloudUpload/>} 強力推送全頁面資料
             </button>
           </div>
 
@@ -286,7 +347,6 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
           </button>
         </div>
 
-        {/* Fixed Footer */}
         <div className="p-10 pt-4 pb-16 sm:pb-10 bg-white border-t border-journey-cream">
            <button onClick={handleForcePush} className="w-full bg-journey-brown text-white py-6 rounded-[2.5rem] font-black shadow-2xl active:scale-95 transition-all">儲存並同步</button>
         </div>
