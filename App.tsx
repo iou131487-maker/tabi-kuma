@@ -19,19 +19,22 @@ const DEFAULT_CONFIG = {
 };
 
 /**
- * 原子鏡像寫入：將雲端整包資料精確寫入本地 LocalStorage
+ * 原子鏡像寫入 v5.7：將雲端全量資料精確同步至 LocalStorage
  */
 const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTableKey: string) => {
   try {
     const tripInfo = allData[tripTableKey]?.[0];
     if (!tripInfo) return false;
 
-    // 1. 清理舊資料
+    // 1. 精確清理舊有與此 ID 相關的所有 LocalStorage 鍵
+    const prefixes = ['sched_', 'plan_', 'book_', 'exp_', 'jrnl_', 'mem_', 'last_day_', 'plan_last_tab_'];
     Object.keys(localStorage).forEach(k => {
-      if (k.includes(tripId)) localStorage.removeItem(k);
+      if (prefixes.some(p => k.startsWith(p) && k.includes(tripId))) {
+        localStorage.removeItem(k);
+      }
     });
 
-    // 2. 寫入基本配置
+    // 2. 寫入主配置（標題與日期）
     localStorage.setItem('trip_config', JSON.stringify({
       id: tripId,
       title: tripInfo.title,
@@ -39,11 +42,12 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
       userAvatar: DEFAULT_CONFIG.userAvatar
     }));
 
-    // 3. 處理行程 (Schedules) - 按天分組
-    if (allData.schedules) {
+    // 3. 行程 (Schedules) - 按天分組寫入
+    if (allData.schedules && Array.isArray(allData.schedules)) {
       const dayGroups = allData.schedules.reduce((acc: any, s: any) => {
-        acc[s.day_index] = acc[s.day_index] || [];
-        acc[s.day_index].push(s);
+        const dIdx = s.day_index ?? 0;
+        acc[dIdx] = acc[dIdx] || [];
+        acc[dIdx].push(s);
         return acc;
       }, {});
       Object.entries(dayGroups).forEach(([idx, data]) => {
@@ -51,18 +55,17 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
       });
     }
 
-    // 4. 處理準備清單 (Planning) - 重要：必須按 type 分類存儲
-    if (allData.planning_items) {
+    // 4. 準備清單 (Planning) - 拆解回 todo/packing/shopping
+    if (allData.planning_items && Array.isArray(allData.planning_items)) {
       const types = ['todo', 'packing', 'shopping'];
       types.forEach(t => {
         const filtered = allData.planning_items.filter((item: any) => item.type === t);
-        if (filtered.length > 0) {
-          localStorage.setItem(`plan_${tripId}_${t}`, JSON.stringify(filtered));
-        }
+        localStorage.setItem(`plan_${tripId}_${t}`, JSON.stringify(filtered));
       });
+      localStorage.setItem(`plan_last_tab_${tripId}`, 'todo');
     }
 
-    // 5. 處理其他標準表格
+    // 5. 映射其他標準表格
     const tableMappings: Record<string, string> = {
       'bookings': `book_${tripId}`,
       'expenses': `exp_${tripId}`,
@@ -71,7 +74,7 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
     };
 
     Object.entries(tableMappings).forEach(([dbKey, localKey]) => {
-      if (allData[dbKey] && allData[dbKey].length > 0) {
+      if (allData[dbKey]) {
         localStorage.setItem(localKey, JSON.stringify(allData[dbKey]));
       }
     });
@@ -99,19 +102,18 @@ const AutoSyncHandler = () => {
     try {
       if (!supabase) throw new Error("資料庫未連線");
       
-      // 擴展同步表，加入 journals
       const tables = ['trips', 'schedules', 'bookings', 'expenses', 'planning_items', 'members', 'journals'];
       const bundle: Record<string, any> = {};
       
       for (let i = 0; i < tables.length; i++) {
         const t = tables[i];
         const { data, error } = await supabase.from(t).select('*').eq(t === 'trips' ? 'id' : 'trip_id', id);
-        if (error) throw new Error(`讀取 ${t} 失敗`);
+        if (error) throw new Error(`讀取雲端 ${t} 失敗`);
         bundle[t] = data || [];
         setProgress(Math.round(10 + ((i + 1) / tables.length) * 90));
       }
 
-      if (!bundle.trips?.length) throw new Error("雲端找不到行程。請先在電腦端點擊強力推送。");
+      if (!bundle.trips?.length) throw new Error("雲端找不到此行程 ID。請在發起端裝置點擊「強力推送」。");
       
       if (atomicMirrorWrite(id, bundle, 'trips')) {
         setStatus('success');
@@ -120,7 +122,7 @@ const AutoSyncHandler = () => {
           window.location.reload(); 
         }, 1500);
       } else {
-        throw new Error("本地寫入失敗");
+        throw new Error("同步至本地存儲時發生錯誤");
       }
     } catch (e: any) { 
       setErrorMessage(e.message); 
@@ -132,21 +134,21 @@ const AutoSyncHandler = () => {
     <div className="fixed inset-0 z-[5000] bg-journey-cream flex flex-col items-center justify-center p-6 text-center">
       <div className="w-full max-w-sm bg-white rounded-[4rem] p-10 shadow-2xl border-4 border-journey-green">
         <div className="w-20 h-20 bg-journey-green/10 rounded-3xl flex items-center justify-center text-journey-green mx-auto mb-6">
-          <Layers size={40} className={status === 'syncing' ? 'animate-pulse' : ''}/>
+          <Download size={40} className={status === 'syncing' ? 'animate-bounce' : ''}/>
         </div>
-        <h2 className="text-2xl font-black italic text-journey-brown mb-2">克隆同步 v5.5</h2>
+        <h2 className="text-2xl font-black italic text-journey-brown mb-2">克隆同步 v5.7</h2>
         {status === 'check' && (
           <div className="space-y-6">
-            <p className="text-[11px] font-bold opacity-40 italic">目標 ID: {id}</p>
-            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all">立即開始克隆</button>
+            <p className="text-[11px] font-black opacity-40 italic leading-relaxed">即將同步所有行程、標題、日期、<br/>清單、預訂、支出、成員與日誌。</p>
+            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all">開始完整克隆</button>
           </div>
         )}
-        {status === 'syncing' && <p className="text-sm font-black italic animate-pulse">傳輸中... {progress}%</p>}
-        {status === 'success' && <p className="text-lg font-black text-journey-green animate-bounce">同步完成 ✨ 即將進入</p>}
+        {status === 'syncing' && <p className="text-sm font-black italic animate-pulse">正在搬運資料中... {progress}%</p>}
+        {status === 'success' && <p className="text-lg font-black text-journey-green animate-bounce">同步大成功 ✨</p>}
         {status === 'error' && (
           <div className="space-y-4">
             <div className="bg-journey-red/5 p-4 rounded-2xl text-[10px] font-black text-journey-red leading-relaxed">{errorMessage}</div>
-            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-4 rounded-3xl font-black">重試一次</button>
+            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-4 rounded-3xl font-black">重新嘗試</button>
           </div>
         )}
       </div>
@@ -187,7 +189,7 @@ const AppContent = () => {
     <div className="min-h-screen pb-44 flex flex-col">
       {dbReady === false && !location.pathname.includes('/sync') && (
         <div className="fixed top-0 left-0 w-full bg-journey-red text-white pt-12 pb-3 px-6 z-[2000] text-[10px] font-black uppercase flex justify-between items-center shadow-xl">
-           <span>資料庫表尚未初始化</span>
+           <span>資料庫未就緒</span>
            <button onClick={() => setShowSettings(true)} className="underline">查看教學</button>
         </div>
       )}
@@ -239,7 +241,7 @@ const AppContent = () => {
 const LoadingScreen = () => (
   <div className="h-screen w-screen flex flex-col items-center justify-center bg-journey-cream text-journey-brown p-10">
     <div className="w-24 h-24 bg-journey-green rounded-[2.5rem] flex items-center justify-center shadow-xl animate-bounce-slow"><Plane size={48} className="text-white"/></div>
-    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v5.5...</p>
+    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v5.7...</p>
   </div>
 );
 
@@ -253,29 +255,35 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
   const [endDate, setEndDate] = useState(dates[1] || '2025-01-07');
 
   const handleForcePush = async () => {
-    if (!supabase || dbReady === false) return alert("資料庫尚未就緒");
+    if (!supabase || dbReady === false) return alert("資料庫尚未就緒，請檢查連線。");
     setPushing(true);
     const finalDateRange = `${startDate} ~ ${endDate}`;
     const finalConfig = { ...formData, dateRange: finalDateRange };
     
     try {
-      // 1. 推送行程主表
+      // 1. 推送行程主表（標題、日期、ID）
       await supabase.from('trips').upsert({ id: config.id, title: formData.title, date_range: finalDateRange });
       
-      // 2. 推送行程細節 (Schedules)
-      for(let d=0; d<15; d++) {
+      // 2. 推送行程詳細內容 (Schedules) - 掃描最多 31 天
+      for(let d=0; d<32; d++) {
         const data = localStorage.getItem(`sched_${config.id}_day${d}`);
-        if (data) await supabase.from('schedules').upsert(JSON.parse(data));
+        if (data) {
+          const parsed = JSON.parse(data);
+          if (parsed.length > 0) await supabase.from('schedules').upsert(parsed);
+        }
       }
 
-      // 3. 推送準備清單 (Planning) - 掃描所有分頁
+      // 3. 推送準備清單 (Planning) - 待辦、行李、購物全量上傳
       const planTypes = ['todo', 'packing', 'shopping'];
       for (const pt of planTypes) {
         const data = localStorage.getItem(`plan_${config.id}_${pt}`);
-        if (data) await supabase.from('planning_items').upsert(JSON.parse(data));
+        if (data) {
+          const parsed = JSON.parse(data);
+          if (parsed.length > 0) await supabase.from('planning_items').upsert(parsed);
+        }
       }
 
-      // 4. 推送其他資料 (Bookings, Expenses, Journals, Members)
+      // 4. 推送其餘所有分頁資料
       const otherTables = [
         { table: 'bookings', key: `book_${config.id}` },
         { table: 'expenses', key: `exp_${config.id}` },
@@ -293,10 +301,10 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
         }
       }
 
-      alert("✅ 全頁面同步推送成功！手機端現在可以克隆完整資料了。");
+      alert("✅ 完整同步成功！包含：\n- 行程標題與日期\n- 每日行程明細\n- 待辦/行李/購物清單\n- 預訂、支出、成員與日誌圖片");
       onSave(finalConfig);
     } catch (e: any) { 
-      console.error(e);
+      console.error("Force push error:", e);
       alert("推送失敗: " + e.message); 
     } finally { 
       setPushing(false); 
@@ -318,15 +326,17 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
 
         <div className="flex-grow overflow-y-auto px-10 pb-10 space-y-6">
           <div className="p-6 bg-journey-green/10 rounded-[2.5rem] border-4 border-white shadow-soft-sm space-y-4">
-            <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">同步狀態</p>
-            <button onClick={handleForcePush} disabled={pushing} className="w-full py-5 rounded-2xl bg-white text-journey-green font-black shadow-sm flex items-center justify-center gap-3 active:scale-95">
-              {pushing ? <Loader2 className="animate-spin"/> : <CloudUpload/>} 強力推送全頁面資料
+            <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">全量同步 v5.7</p>
+            <button onClick={handleForcePush} disabled={pushing} className="w-full py-5 rounded-2xl bg-white text-journey-green font-black shadow-sm flex items-center justify-center gap-3 active:scale-95 transition-all">
+              {pushing ? <Loader2 className="animate-spin text-journey-green"/> : <CloudUpload className="text-journey-green"/>} 
+              強力推送所有頁面資料
             </button>
+            <p className="text-[9px] text-center font-bold opacity-30 italic px-4 leading-relaxed">這將覆蓋雲端現有資料，包含日誌照片與支出明細。</p>
           </div>
 
           <div className="space-y-4 pt-2">
              <div className="space-y-2">
-                <label className="text-[10px] font-black text-journey-brown/30 ml-4 uppercase">行程名稱</label>
+                <label className="text-[10px] font-black text-journey-brown/30 ml-4 uppercase tracking-widest">行程名稱</label>
                 <input value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-journey-cream p-5 rounded-[2rem] font-black focus:outline-none border-4 border-white shadow-inner" />
              </div>
 
