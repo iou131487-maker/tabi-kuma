@@ -17,7 +17,8 @@ export default defineConfig({
       'react-dom/client': 'https://esm.sh/react-dom@19.0.0/client',
       'react/jsx-runtime': 'https://esm.sh/react@19.0.0/jsx-runtime',
       'lucide-react': 'https://esm.sh/lucide-react@0.475.0?external=react',
-      'react-router-dom': 'https://esm.sh/react-router-dom@7.1.5?external=react,react-dom',
+      // Downgrade react-router-dom to v6.28.0 for stability and guaranteed named exports
+      'react-router-dom': 'https://esm.sh/react-router-dom@6.28.0?external=react,react-dom',
       '@supabase/supabase-js': 'https://esm.sh/@supabase/supabase-js@2.45.4',
       '@google/genai': 'https://esm.sh/@google/genai@1.3.0',
       'firebase/app': 'https://esm.sh/firebase@11.1.0/app',
