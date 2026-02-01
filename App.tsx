@@ -19,22 +19,25 @@ const DEFAULT_CONFIG = {
 };
 
 /**
- * 原子鏡像寫入 v5.7：將雲端全量資料精確同步至 LocalStorage
+ * 原子鏡像寫入 v5.9：確保雲端資料與本地 LocalStorage 絕對同步
  */
 const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTableKey: string) => {
   try {
     const tripInfo = allData[tripTableKey]?.[0];
     if (!tripInfo) return false;
 
-    // 1. 精確清理舊有與此 ID 相關的所有 LocalStorage 鍵
+    // 1. 徹底清理所有與當前 tripId 或 ID 命名相關的舊資料，避免污染
     const prefixes = ['sched_', 'plan_', 'book_', 'exp_', 'jrnl_', 'mem_', 'last_day_', 'plan_last_tab_'];
-    Object.keys(localStorage).forEach(k => {
-      if (prefixes.some(p => k.startsWith(p) && k.includes(tripId))) {
-        localStorage.removeItem(k);
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.includes(tripId) || prefixes.some(p => k.startsWith(p)))) {
+        keysToRemove.push(k);
       }
-    });
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
 
-    // 2. 寫入主配置（標題與日期）
+    // 2. 寫入主行程配置
     localStorage.setItem('trip_config', JSON.stringify({
       id: tripId,
       title: tripInfo.title,
@@ -42,48 +45,49 @@ const atomicMirrorWrite = (tripId: string, allData: Record<string, any>, tripTab
       userAvatar: DEFAULT_CONFIG.userAvatar
     }));
 
-    // 3. 行程 (Schedules) - 按天分組寫入
+    // 3. 恢復行程 (Schedules) - 按 day_index 分組
     if (allData.schedules && Array.isArray(allData.schedules)) {
-      const dayGroups = allData.schedules.reduce((acc: any, s: any) => {
-        const dIdx = s.day_index ?? 0;
-        acc[dIdx] = acc[dIdx] || [];
-        acc[dIdx].push(s);
-        return acc;
-      }, {});
-      Object.entries(dayGroups).forEach(([idx, data]) => {
-        localStorage.setItem(`sched_${tripId}_day${idx}`, JSON.stringify(data));
+      const groups: Record<number, any[]> = {};
+      allData.schedules.forEach((s: any) => {
+        const d = s.day_index ?? 0;
+        groups[d] = groups[d] || [];
+        groups[d].push(s);
+      });
+      Object.entries(groups).forEach(([idx, items]) => {
+        localStorage.setItem(`sched_${tripId}_day${idx}`, JSON.stringify(items));
       });
     }
 
-    // 4. 準備清單 (Planning) - 拆解回 todo/packing/shopping
+    // 4. 恢復準備清單 (Planning) - 按 type 分組
     if (allData.planning_items && Array.isArray(allData.planning_items)) {
-      const types = ['todo', 'packing', 'shopping'];
-      types.forEach(t => {
-        const filtered = allData.planning_items.filter((item: any) => item.type === t);
-        localStorage.setItem(`plan_${tripId}_${t}`, JSON.stringify(filtered));
+      const pTypes = ['todo', 'packing', 'shopping'];
+      pTypes.forEach(type => {
+        const filtered = allData.planning_items.filter((p: any) => p.type === type);
+        localStorage.setItem(`plan_${tripId}_${type}`, JSON.stringify(filtered));
       });
       localStorage.setItem(`plan_last_tab_${tripId}`, 'todo');
     }
 
-    // 5. 映射其他標準表格
-    const tableMappings: Record<string, string> = {
+    // 5. 恢復其他分頁
+    const mapping: Record<string, string> = {
       'bookings': `book_${tripId}`,
       'expenses': `exp_${tripId}`,
       'journals': `jrnl_${tripId}`,
       'members': `mem_${tripId}`
     };
 
-    Object.entries(tableMappings).forEach(([dbKey, localKey]) => {
-      if (allData[dbKey]) {
-        localStorage.setItem(localKey, JSON.stringify(allData[dbKey]));
+    Object.entries(mapping).forEach(([dbKey, localKey]) => {
+      const data = allData[dbKey];
+      if (data && Array.isArray(data)) {
+        localStorage.setItem(localKey, JSON.stringify(data));
       }
     });
 
-    localStorage.setItem(`last_mirror_sync_${tripId}`, new Date().toISOString());
+    localStorage.setItem(`last_sync_ts_${tripId}`, new Date().toISOString());
     return true;
-  } catch (e) { 
-    console.error("Atomic write failed:", e);
-    return false; 
+  } catch (e) {
+    console.error("Atomic Sync Error:", e);
+    return false;
   }
 };
 
@@ -97,10 +101,10 @@ const AutoSyncHandler = () => {
   const [progress, setProgress] = useState(0);
 
   const startSync = async () => {
-    if (!id) { setErrorMessage("請使用正確的克隆連結"); setStatus('error'); return; }
-    setStatus('syncing'); setProgress(10);
+    if (!id) { setErrorMessage("克隆連結無效"); setStatus('error'); return; }
+    setStatus('syncing'); setProgress(5);
     try {
-      if (!supabase) throw new Error("資料庫未連線");
+      if (!supabase) throw new Error("資料庫連線中斷");
       
       const tables = ['trips', 'schedules', 'bookings', 'expenses', 'planning_items', 'members', 'journals'];
       const bundle: Record<string, any> = {};
@@ -108,12 +112,14 @@ const AutoSyncHandler = () => {
       for (let i = 0; i < tables.length; i++) {
         const t = tables[i];
         const { data, error } = await supabase.from(t).select('*').eq(t === 'trips' ? 'id' : 'trip_id', id);
-        if (error) throw new Error(`讀取雲端 ${t} 失敗`);
+        if (error) throw new Error(`讀取 ${t} 失敗: ${error.message}`);
         bundle[t] = data || [];
-        setProgress(Math.round(10 + ((i + 1) / tables.length) * 90));
+        setProgress(Math.round(5 + ((i + 1) / tables.length) * 95));
       }
 
-      if (!bundle.trips?.length) throw new Error("雲端找不到此行程 ID。請在發起端裝置點擊「強力推送」。");
+      if (!bundle.trips || bundle.trips.length === 0) {
+        throw new Error("雲端找不到此行程。請確保電腦端已點擊「強力推送所有頁面資料」。");
+      }
       
       if (atomicMirrorWrite(id, bundle, 'trips')) {
         setStatus('success');
@@ -122,7 +128,7 @@ const AutoSyncHandler = () => {
           window.location.reload(); 
         }, 1500);
       } else {
-        throw new Error("同步至本地存儲時發生錯誤");
+        throw new Error("資料寫入本地時發生異常");
       }
     } catch (e: any) { 
       setErrorMessage(e.message); 
@@ -136,19 +142,19 @@ const AutoSyncHandler = () => {
         <div className="w-20 h-20 bg-journey-green/10 rounded-3xl flex items-center justify-center text-journey-green mx-auto mb-6">
           <Download size={40} className={status === 'syncing' ? 'animate-bounce' : ''}/>
         </div>
-        <h2 className="text-2xl font-black italic text-journey-brown mb-2">克隆同步 v5.7</h2>
+        <h2 className="text-2xl font-black italic text-journey-brown mb-2">克隆同步 v5.9</h2>
         {status === 'check' && (
           <div className="space-y-6">
-            <p className="text-[11px] font-black opacity-40 italic leading-relaxed">即將同步所有行程、標題、日期、<br/>清單、預訂、支出、成員與日誌。</p>
-            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all">開始完整克隆</button>
+            <p className="text-[11px] font-black opacity-40 italic leading-relaxed">即將下載所有頁面資料：<br/>機票、行程、支出、清單、日誌...</p>
+            <button onClick={startSync} className="w-full py-6 bg-journey-green text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all">開始全量搬運</button>
           </div>
         )}
-        {status === 'syncing' && <p className="text-sm font-black italic animate-pulse">正在搬運資料中... {progress}%</p>}
-        {status === 'success' && <p className="text-lg font-black text-journey-green animate-bounce">同步大成功 ✨</p>}
+        {status === 'syncing' && <p className="text-sm font-black italic animate-pulse">同步中... {progress}%</p>}
+        {status === 'success' && <p className="text-lg font-black text-journey-green animate-bounce">同步完成 ✨</p>}
         {status === 'error' && (
           <div className="space-y-4">
             <div className="bg-journey-red/5 p-4 rounded-2xl text-[10px] font-black text-journey-red leading-relaxed">{errorMessage}</div>
-            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-4 rounded-3xl font-black">重新嘗試</button>
+            <button onClick={() => setStatus('check')} className="w-full bg-journey-brown text-white py-4 rounded-3xl font-black">重新同步</button>
           </div>
         )}
       </div>
@@ -241,7 +247,7 @@ const AppContent = () => {
 const LoadingScreen = () => (
   <div className="h-screen w-screen flex flex-col items-center justify-center bg-journey-cream text-journey-brown p-10">
     <div className="w-24 h-24 bg-journey-green rounded-[2.5rem] flex items-center justify-center shadow-xl animate-bounce-slow"><Plane size={48} className="text-white"/></div>
-    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v5.7...</p>
+    <p className="mt-8 text-xl font-black italic tracking-tighter">Tabi-Kuma v5.9...</p>
   </div>
 );
 
@@ -258,54 +264,61 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
     if (!supabase || dbReady === false) return alert("資料庫尚未就緒，請檢查連線。");
     setPushing(true);
     const finalDateRange = `${startDate} ~ ${endDate}`;
-    const finalConfig = { ...formData, dateRange: finalDateRange };
+    const finalConfig = { ...formData, id: config.id, dateRange: finalDateRange };
     
     try {
-      // 1. 推送行程主表（標題、日期、ID）
-      await supabase.from('trips').upsert({ id: config.id, title: formData.title, date_range: finalDateRange });
-      
-      // 2. 推送行程詳細內容 (Schedules) - 掃描最多 31 天
-      for(let d=0; d<32; d++) {
+      // 1. 推送主表
+      const { error: tripErr } = await supabase.from('trips').upsert({ 
+        id: config.id, 
+        title: formData.title, 
+        date_range: finalDateRange 
+      });
+      if (tripErr) throw tripErr;
+
+      // 2. 推送行程細節
+      const schedulePromises = [];
+      for (let d = 0; d < 32; d++) {
         const data = localStorage.getItem(`sched_${config.id}_day${d}`);
         if (data) {
-          const parsed = JSON.parse(data);
-          if (parsed.length > 0) await supabase.from('schedules').upsert(parsed);
+          const parsed = JSON.parse(data).map((item: any) => ({ ...item, trip_id: config.id, day_index: d }));
+          if (parsed.length > 0) schedulePromises.push(supabase.from('schedules').upsert(parsed));
         }
       }
+      await Promise.all(schedulePromises);
 
-      // 3. 推送準備清單 (Planning) - 待辦、行李、購物全量上傳
-      const planTypes = ['todo', 'packing', 'shopping'];
+      // 3. 推送準備清單
+      const planPromises = [];
+      const planTypes = ['todo', 'packing', 'shopping'] as const;
       for (const pt of planTypes) {
         const data = localStorage.getItem(`plan_${config.id}_${pt}`);
         if (data) {
-          const parsed = JSON.parse(data);
-          if (parsed.length > 0) await supabase.from('planning_items').upsert(parsed);
+          const parsed = JSON.parse(data).map((item: any) => ({ ...item, trip_id: config.id, type: pt }));
+          if (parsed.length > 0) planPromises.push(supabase.from('planning_items').upsert(parsed));
         }
       }
+      await Promise.all(planPromises);
 
-      // 4. 推送其餘所有分頁資料
-      const otherTables = [
-        { table: 'bookings', key: `book_${config.id}` },
-        { table: 'expenses', key: `exp_${config.id}` },
-        { table: 'journals', key: `jrnl_${config.id}` },
-        { table: 'members', key: `mem_${config.id}` }
+      // 4. 推送其他標準分頁
+      const others = [
+        { t: 'bookings', k: `book_${config.id}` },
+        { t: 'expenses', k: `exp_${config.id}` },
+        { t: 'journals', k: `jrnl_${config.id}` },
+        { t: 'members', k: `mem_${config.id}` }
       ];
 
-      for (const item of otherTables) {
-        const data = localStorage.getItem(item.key);
+      for (const o of others) {
+        const data = localStorage.getItem(o.k);
         if (data) {
-          const parsed = JSON.parse(data);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            await supabase.from(item.table).upsert(parsed);
-          }
+          const parsed = JSON.parse(data).map((row: any) => ({ ...row, trip_id: config.id }));
+          if (parsed.length > 0) await supabase.from(o.t).upsert(parsed);
         }
       }
 
-      alert("✅ 完整同步成功！包含：\n- 行程標題與日期\n- 每日行程明細\n- 待辦/行李/購物清單\n- 預訂、支出、成員與日誌圖片");
+      alert("✅ 全量推送成功！\n機票、記帳、成員、清單、行程、日誌已全部上傳至雲端。");
       onSave(finalConfig);
     } catch (e: any) { 
       console.error("Force push error:", e);
-      alert("推送失敗: " + e.message); 
+      alert("推送失敗: " + (e.message || "未知錯誤")); 
     } finally { 
       setPushing(false); 
     }
@@ -326,12 +339,12 @@ const TripSettingsModal = ({ isOpen, onClose, config, dbReady, onSave }: any) =>
 
         <div className="flex-grow overflow-y-auto px-10 pb-10 space-y-6">
           <div className="p-6 bg-journey-green/10 rounded-[2.5rem] border-4 border-white shadow-soft-sm space-y-4">
-            <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">全量同步 v5.7</p>
+            <p className="text-[10px] font-black text-journey-green uppercase tracking-widest">資料克隆 v5.9</p>
             <button onClick={handleForcePush} disabled={pushing} className="w-full py-5 rounded-2xl bg-white text-journey-green font-black shadow-sm flex items-center justify-center gap-3 active:scale-95 transition-all">
               {pushing ? <Loader2 className="animate-spin text-journey-green"/> : <CloudUpload className="text-journey-green"/>} 
               強力推送所有頁面資料
             </button>
-            <p className="text-[9px] text-center font-bold opacity-30 italic px-4 leading-relaxed">這將覆蓋雲端現有資料，包含日誌照片與支出明細。</p>
+            <p className="text-[9px] text-center font-bold opacity-30 italic px-4 leading-relaxed">請確保電腦端完成推送後，再使用手機端連結。這將同步包括所有分頁的所有細節。</p>
           </div>
 
           <div className="space-y-4 pt-2">
